@@ -1,0 +1,45 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv
+wandb/
+
+# Operating System Generated Files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Editor and IDE Specific Files
+.vscode/
+.idea/
+*.sublime-*
+.settings/
+
+# Build Output Directories
+bin/
+build/
+out/
+dist/
+
+# Version Control System Folders
+.svn/
+CVS/
+
+# Temporary Files and Logs
+# *.log
+*.tmp
+*.temp
+
+# Security and Environment Files
+.env
+.env.local
+*.pem
+*.key
+
+# Database Files
+*.db
+*.sql
+*.sqlite
+
