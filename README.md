@@ -2,10 +2,10 @@
 
 ## GOALS
 
-[ ] Train a base LLM model
-[ ] Train an unconditional diffusion model
-[ ] Train a clip model between these two
-[ ] Train a text-to-image model
+[] Train a base LLM model
+[] Train an unconditional diffusion model
+[] Train a clip model between these two
+[] Train a text-to-image model
 
 ## UPDATES
 
