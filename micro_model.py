@@ -87,7 +87,7 @@ def get_model(model_config: ModelConfig = None):
         num_heads=num_heads,
         head_dim=head_dim,
         norm=nn.RMSNorm(hidden_size),
-        output=nn.Linear(hidden_size, vocab_size)
+        output=nn.Linear(hidden_size, vocab_size),
         config=model_config
     )
     return decoder

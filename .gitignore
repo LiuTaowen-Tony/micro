@@ -43,3 +43,6 @@ CVS/
 *.sql
 *.sqlite
 
+checkpoints/
+trained_tokenizers/
+
