@@ -72,7 +72,7 @@ class MicroTraining(pl.LightningModule):
             chat_warpper = ChatWrapper(self.model, self.tokenizer, torch.bfloat16, self.device)
             print(chat_warpper.show_output_probs(test_prompt))
             generated_text = chat_warpper.generate(test_prompt)
-            self.trainer.save_checkpoint(f"micro-0.2b-{self.trainer.batch_idx}.ckpt")
+            self.trainer.save_checkpoint(f"micro-0.2b-{self.batch_idx}.ckpt")
             print(generated_text)
         return loss
 
