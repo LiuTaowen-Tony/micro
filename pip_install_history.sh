@@ -1,3 +1,4 @@
+command pip3 install torch
 command pip3 install transformers # Sat 19 Oct 16:29:18 BST 2024
 command pip3 install tokenizers # Sat 19 Oct 16:30:03 BST 2024
 command pip3 install wandb # Wed 23 Oct 21:48:27 BST 2024

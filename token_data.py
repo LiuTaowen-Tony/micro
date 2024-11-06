@@ -1,8 +1,12 @@
 import torch
 from transformers import PreTrainedTokenizerFast
+from pathlib import Path
+
 
 def load_tokenizer():
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file='trained_tokenizers/v1.json')
+    script_dir = Path(__file__).parent
+    file_path = script_dir / 'trained_tokenizers/v1.json'
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=file_path.as_posix())
     tokenizer.unk_token_id = 0
     tokenizer.sep_token_id = 1
     tokenizer.pad_token_id = 2
