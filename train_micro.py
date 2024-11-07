@@ -4,21 +4,19 @@ import dataclasses
 from transformers import PreTrainedTokenizerFast, HfArgumentParser, AutoTokenizer
 from chat_wrapper import ChatWrapper
 from pytorch_lightning.loggers import WandbLogger
-from datasets import load_dataset
 import torch
 import micro_model
-from torch.utils.data import DataLoader, Dataset
-from functools import partial
-from token_data import load_tokenizer, data_collator
+import token_data
 import ml_utils
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+torch.set_float32_matmul_precision('medium')
 
 @dataclasses.dataclass()
 class Args:
     total_batch_size: int = 2048
     accumulate_grad_batches: int = 40
-    learning_rate: float = 7e-4
+    learning_rate: float = 6e-4
     weight_decay: float = 1e-1
     beta1: float = 0.9
     beta2: float = 0.999
@@ -79,7 +77,6 @@ class MicroTraining(pl.LightningModule):
         logits = self.model(tokens=input_ids)
         loss = self.loss(logits.view(-1, logits.size(-1)), labels.view(-1))
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
-        self.log("token_count", batch["token_count"], sync_dist=True)
         if batch_idx == 0:
             test_prompt = "My name is David, and I am"
             chat_warpper = ChatWrapper(
@@ -144,39 +141,20 @@ def main():
         val_check_interval=args.val_check_interval,
     )
     # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
-    tokenizer = load_tokenizer()
+    tokenizer = token_data.load_tokenizer()
     model = micro_model.get_model()
     model_wrapper = MicroTraining(model, tokenizer, args)
-    train_dataset = load_dataset(
-        path="cerebras/SlimPajama-627B",
-        split="train",
-        trust_remote_code=True,
-        streaming=True,
-    )
-    train_dataloader = DataLoader(
-        train_dataset,
+    path="cerebras/SlimPajama-627B"
+    data_module = token_data.FillSeqDataModule(
+        tokenizer,
+        max_seq_len=1024,
         batch_size=args.batch_size,
-        num_workers=8,
-        collate_fn=partial(data_collator, tokenizer, model.max_seq_len),
-    )
-    val_dataset = load_dataset(
-        path="cerebras/SlimPajama-627B",
-        split="validation",
-        trust_remote_code=True,
-        streaming=True,
-    )
-    subset = ml_utils.data.IterableSubset(val_dataset, 1000)
-    val_dataloader = DataLoader(
-        subset,
-        batch_size=args.batch_size,
-        num_workers=8,
-        collate_fn=partial(data_collator, tokenizer, model.max_seq_len),
+        path=path,
     )
 
     trainer.fit(
         model_wrapper,
-        train_dataloader,
-        val_dataloader,
+        datamodule=data_module,
         ckpt_path=args.ckpt_path if args.ckpt_path else None,
     )
     torch.save(model.state_dict(), "micro_model.pth")
