@@ -87,8 +87,8 @@ def get_model(model_config: ModelConfig = None):
         num_heads=num_heads,
         head_dim=head_dim,
         norm=nn.RMSNorm(hidden_size),
-        output=nn.Linear(hidden_size, vocab_size),
-        config=model_config
+        config=model_config,
+        lm_head=nn.Linear(hidden_size, vocab_size),
     )
     return decoder
 
@@ -436,7 +436,7 @@ class TransformerDecoder(nn.Module):
         num_heads: int,
         head_dim: int,
         norm: nn.Module,
-        output: nn.Linear,
+        lm_head: nn.Module,
         config: ModelConfig,
     ) -> None:
         super().__init__()
@@ -444,11 +444,11 @@ class TransformerDecoder(nn.Module):
         self.tok_embeddings = tok_embeddings
         self.layers = _get_clones(layer, num_layers)
         self.norm = norm
-        self.output = output
         self.max_seq_len = max_seq_len
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.causal_mask = None
+        self.lm_head = lm_head
         self.config = config
 
     def setup_caches(self, batch_size: int, dtype: torch.dtype, device: torch.device) -> None:
@@ -544,6 +544,5 @@ class TransformerDecoder(nn.Module):
         # shape: [b, s, d]
         h = self.norm(h)
 
-        # shape: [b, s, out_dim] - out_dim is usually the vocab size
-        output = self.output(h).float()
+        output = self.lm_head(h)
         return output

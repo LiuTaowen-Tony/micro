@@ -1,7 +1,8 @@
 import random
 import pytorch_lightning as pl
 import dataclasses
-from transformers import PreTrainedTokenizerFast, HfArgumentParser, AutoTokenizer
+from transformers import PreTrainedTokenizerFast, AutoTokenizer
+from ml_utils.args import DataClassArgumentParser
 from chat_wrapper import ChatWrapper
 from pytorch_lightning.loggers import WandbLogger
 import torch
@@ -9,28 +10,33 @@ import micro_model
 import token_data
 import ml_utils
 import os
+from lightning.pytorch.utilities import grad_norm
+
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch.set_float32_matmul_precision('medium')
 
 @dataclasses.dataclass()
 class Args:
-    total_batch_size: int = 2048
-    accumulate_grad_batches: int = 40
+    total_batch_size: int = 384
+    accumulate_grad_batches: int = 4
     learning_rate: float = 6e-4
     weight_decay: float = 1e-1
     beta1: float = 0.9
     beta2: float = 0.999
-    warmup_steps: int = 1000
+    warmup_steps: int = 2000
     seed: int = 42
     batch_size: int = -1
-    max_steps: int = 10000
+    max_steps: int = 60000
     val_check_interval: int = 3000
+    min_learning_rate_ratio: float = 0.1
+    gradient_clip_val: float = 1
     ckpt_path: str = ""
 
 
 # Argument parser
 def parse_args() -> Args:
-    args = HfArgumentParser(Args).parse_args_into_dataclasses()[0]
+    args = DataClassArgumentParser(Args).parse_args_into_dataclasses()[0]
     args: Args
     args.batch_size = (
         args.total_batch_size
@@ -57,6 +63,7 @@ class MicroTraining(pl.LightningModule):
         self.tokenizer = tokenizer
         self.loss = torch.nn.CrossEntropyLoss()
         self.check_first_batch = False
+        self.prev_loss = float("inf")
 
     def forward(self, input_ids, attention_mask):
         return self.model(input_ids, attention_mask=attention_mask)
@@ -69,6 +76,10 @@ class MicroTraining(pl.LightningModule):
         self.log("train_loss", loss, prog_bar=True)
         self.log(
             "lr", self.trainer.optimizers[0].param_groups[0]["lr"], prog_bar=True)
+        if loss.item() > self.prev_loss * 2:
+            loss = 0
+            print(f"outlier loss: {loss.item()}")
+        self.prev_loss = loss.item()
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -86,6 +97,12 @@ class MicroTraining(pl.LightningModule):
             generated_text = chat_warpper.generate(test_prompt)
             print(generated_text)
         return loss
+
+    def on_before_optimizer_step(self, optimizer):
+        # Compute the 2-norm for each layer
+        # If using mixed precision, the gradients are already unscaled here
+        norms = grad_norm(self.model, norm_type=2)
+        self.log_dict(norms)
 
     def configure_optimizers(self):
         param_dict = {pn: p for pn, p in self.named_parameters()
@@ -109,13 +126,13 @@ class MicroTraining(pl.LightningModule):
             optim_groups,
             lr=self.args.learning_rate,
             betas=(self.args.beta1, self.args.beta2),
-            fused=True,
+            fused=False,
         )
         scheduler = ml_utils.optim.LinearWarmupCosineAnnealingLR(
             optimizer,
             warmup_steps=self.args.warmup_steps,
             max_steps=self.trainer.max_steps,
-            eta_min=0,
+            eta_min=self.args.learning_rate * self.args.min_learning_rate_ratio,
         )
         return {
             "optimizer": optimizer,
@@ -139,6 +156,8 @@ def main():
         logger=wandb_logger,
         max_steps=args.max_steps,
         val_check_interval=args.val_check_interval,
+        log_every_n_steps=1,
+        gradient_clip_val=args.gradient_clip_val,
     )
     # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
     tokenizer = token_data.load_tokenizer()
