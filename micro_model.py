@@ -47,6 +47,8 @@ class ModelConfig:
     num_layers: int = 10
     attn_bias: bool = False
     ffn_bias: bool = True
+    pos_emb_base: int = 10000
+    pos_emb_max_seq_len: int = 4096
 
 def get_model(model_config: ModelConfig = None):
     if model_config is None:
@@ -69,7 +71,7 @@ def get_model(model_config: ModelConfig = None):
         k_proj=nn.Linear(hidden_size, num_kv_heads * head_dim, bias=model_config.attn_bias),
         v_proj=nn.Linear(hidden_size, num_kv_heads * head_dim, bias=model_config.attn_bias),
         output_proj=nn.Linear(hidden_size, hidden_size, bias=model_config.attn_bias),
-        pos_embeddings=RotaryPositionalEmbeddings(head_dim),
+        pos_embeddings=RotaryPositionalEmbeddings(head_dim, model_config.pos_emb_max_seq_len, model_config.pos_emb_base),
         max_seq_len=max_seq_len,
         attn_dropout=attn_dropout,
     )
@@ -519,7 +521,7 @@ class TransformerDecoder(nn.Module):
             Tensor: output tensor with shape [b x s x v]
         """
         # input tensor of shape [b, s]
-        bsz, seq_len = tokens.shape
+        # bsz, seq_len = tokens.shape
 
         # shape: [b, s, d]
         h = self.tok_embeddings(tokens)

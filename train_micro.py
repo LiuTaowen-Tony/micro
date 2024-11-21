@@ -1,3 +1,4 @@
+from typing import Tuple
 import random
 import pytorch_lightning as pl
 import dataclasses
@@ -7,6 +8,7 @@ from chat_wrapper import ChatWrapper
 from pytorch_lightning.loggers import WandbLogger
 import torch
 import micro_model
+from micro_model import ModelConfig
 import token_data
 import ml_utils
 import os
@@ -16,8 +18,9 @@ from lightning.pytorch.utilities import grad_norm
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch.set_float32_matmul_precision('medium')
 
+
 @dataclasses.dataclass()
-class Args:
+class TrainArgs:
     total_batch_size: int = 384
     accumulate_grad_batches: int = 4
     learning_rate: float = 6e-4
@@ -32,18 +35,25 @@ class Args:
     min_learning_rate_ratio: float = 0.1
     gradient_clip_val: float = 1
     ckpt_path: str = ""
+    max_epochs: int = 1
+    data_module_type: str = "fillseq"
+    dataset_path: str = "cerebras/SlimPajama-627B"
+    model_path: str = ""
+    output_path: str = "micro_model.pth"
 
 
 # Argument parser
-def parse_args() -> Args:
-    args = DataClassArgumentParser(Args).parse_args_into_dataclasses()[0]
-    args: Args
-    args.batch_size = (
-        args.total_batch_size
-        // args.accumulate_grad_batches
+def parse_args() -> Tuple[TrainArgs, ModelConfig]:
+    train_args, model_config = DataClassArgumentParser(
+        (TrainArgs, ModelConfig)
+    ).parse_args_into_dataclasses()
+    train_args: TrainArgs
+    train_args.batch_size = (
+        train_args.total_batch_size
+        // train_args.accumulate_grad_batches
         // torch.cuda.device_count()
     )
-    return args
+    return train_args, model_config
 
 
 random.seed(42)
@@ -51,15 +61,16 @@ torch.manual_seed(42)
 
 
 class MicroTraining(pl.LightningModule):
+
     def __init__(
         self,
         model: micro_model.TransformerDecoder,
         tokenizer: PreTrainedTokenizerFast,
-        args: Args,
+        train_args: TrainArgs,
     ):
         super(MicroTraining, self).__init__()
         self.model = model
-        self.args = args
+        self.args = train_args
         self.tokenizer = tokenizer
         self.loss = torch.nn.CrossEntropyLoss()
         self.check_first_batch = False
@@ -144,40 +155,48 @@ class MicroTraining(pl.LightningModule):
 
 # Main training function
 def main():
-    args = parse_args()
+    train_args, model_config = parse_args()
     # Load tokenizer
     wandb_logger = WandbLogger(project="micro-training")
-    wandb_logger.log_hyperparams(args.__dict__)
+    wandb_logger.log_hyperparams(train_args.__dict__)
 
     trainer = pl.Trainer(
-        max_epochs=1,
-        accumulate_grad_batches=args.accumulate_grad_batches,
+        max_epochs=train_args.max_epochs,
+        accumulate_grad_batches=train_args.accumulate_grad_batches,
         precision="bf16-mixed",
         logger=wandb_logger,
-        max_steps=args.max_steps,
-        val_check_interval=args.val_check_interval,
+        max_steps=train_args.max_steps,
+        val_check_interval=train_args.val_check_interval,
         log_every_n_steps=1,
-        gradient_clip_val=args.gradient_clip_val,
+        gradient_clip_val=train_args.gradient_clip_val,
     )
     # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
     tokenizer = token_data.load_tokenizer()
-    model = micro_model.get_model()
-    model_wrapper = MicroTraining(model, tokenizer, args)
-    path="cerebras/SlimPajama-627B"
-    data_module = token_data.FillSeqDataModule(
-        tokenizer,
-        max_seq_len=1024,
-        batch_size=args.batch_size,
-        path=path,
-    )
+    model = micro_model.get_model(model_config)
+    if train_args.model_path != "":
+        model.load_state_dict(torch.load(train_args.model_path))
 
+    model_wrapper = MicroTraining(model, tokenizer, train_args)
+    if train_args.data_module_type == "fillseq":
+        data_module = token_data.FillSeqDataModule(
+            tokenizer,
+            max_seq_len=1024,
+            batch_size=train_args.batch_size,
+            path=train_args.dataset_path,
+        )
+    elif train_args.data_module_type == "sft":
+        data_module = token_data.SFTDataModule(
+            tokenizer,
+            max_seq_len=1024,
+            batch_size=train_args.batch_size,
+            path=train_args.dataset_path,
+        )
     trainer.fit(
         model_wrapper,
         datamodule=data_module,
-        ckpt_path=args.ckpt_path if args.ckpt_path else None,
+        ckpt_path=train_args.ckpt_path if train_args.ckpt_path else None,
     )
-    torch.save(model.state_dict(), "micro_model.pth")
-
+    torch.save(model.state_dict(), train_args.output_path)
 
 if __name__ == "__main__":
     main()
