@@ -40,6 +40,7 @@ class TrainArgs:
     dataset_path: str = "cerebras/SlimPajama-627B"
     model_path: str = ""
     output_path: str = "micro_model.pth"
+    project_name: str = "micro-training"
 
 
 # Argument parser
@@ -89,7 +90,7 @@ class MicroTraining(pl.LightningModule):
             "lr", self.trainer.optimizers[0].param_groups[0]["lr"], prog_bar=True)
         if loss.item() > self.prev_loss * 2:
             loss = 0
-            print(f"outlier loss: {loss.item()}")
+            print(f"outlier loss: {loss}")
         self.prev_loss = loss.item()
         return loss
 

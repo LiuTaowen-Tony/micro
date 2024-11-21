@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import pytorch_lightning as pl
@@ -70,9 +71,7 @@ class FillSeqDataset(torch.utils.data.IterableDataset):
         self.buffer = state_dict["buffer"]
 
 
-
-
-class SFTDataModule(pl.LightningModule):
+class SFTDataModule(pl.LightningDataModule):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerFast,
@@ -91,21 +90,28 @@ class SFTDataModule(pl.LightningModule):
         self.system_start_tokens = tokenizer.encode("<|assistant|>")
         self.eos_token = tokenizer.encode("</s>")
 
+    def prepare_data(self):
+        if not os.path.exists("train_sft"):
+            train_dataset = datasets.load_dataset(self.path, split="train_sft")
+            train_dataset = train_dataset.map(self.get_input_ids_labels,).select_columns(
+                ["input_ids", "labels"]
+            )
+            train_dataset.save_to_disk("train_sft")
+        if not os.path.exists("val_sft"):
+            eval_dataset = datasets.load_dataset(self.path, split="test_sft")
+            eval_dataset = eval_dataset.map(self.get_input_ids_labels,).select_columns(
+                ["input_ids", "labels"]
+            )
+            eval_dataset.save_to_disk("val_sft")
+
     def setup(self, stage: str = "fit"):
         if stage == "fit":
-            train_raw_data = datasets.load_dataset(
-                self.path, split="train_sft", streaming=True
+            self.train_dataset = datasets.load_dataset(
+                "train_sft", streaming=True
             )
-
-            val_raw_data = datasets.load_dataset(
-                self.path, split="test_sft", streaming=True
+            self.val_dataset = datasets.load_dataset(
+                "val_sft", streaming=True
             )
-            self.train_dataset = train_raw_data.map(
-                self.get_input_ids_labels
-            ).select_columns(["input_ids", "labels"])
-            self.val_dataset = val_raw_data.map(
-                self.get_input_ids_labels
-            ).select_columns(["input_ids", "labels"])
 
     def apply_chat_template(self, messages):
         """

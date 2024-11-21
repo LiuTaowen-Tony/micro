@@ -46,3 +46,4 @@ CVS/
 checkpoints/
 trained_tokenizers/
 trained_models/
+sft_dataset/
