@@ -89,9 +89,9 @@ class MicroTraining(pl.LightningModule):
         self.log(
             "lr", self.trainer.optimizers[0].param_groups[0]["lr"], prog_bar=True)
         if loss.item() > self.prev_loss * 2:
-            loss = 0
-            print(f"outlier loss: {loss}")
-        self.prev_loss = loss.item()
+            print(f"outlier loss: {loss.item()}")
+        else:
+            self.prev_loss = loss.item()
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -158,7 +158,7 @@ class MicroTraining(pl.LightningModule):
 def main():
     train_args, model_config = parse_args()
     # Load tokenizer
-    wandb_logger = WandbLogger(project="micro-training")
+    wandb_logger = WandbLogger(project=train_args.project_name)
     wandb_logger.log_hyperparams(train_args.__dict__)
 
     trainer = pl.Trainer(

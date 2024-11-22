@@ -105,13 +105,12 @@ class SFTDataModule(pl.LightningDataModule):
             eval_dataset.save_to_disk("val_sft")
 
     def setup(self, stage: str = "fit"):
+        print("setup")
         if stage == "fit":
-            self.train_dataset = datasets.load_dataset(
-                "train_sft", streaming=True
-            )
-            self.val_dataset = datasets.load_dataset(
-                "val_sft", streaming=True
-            )
+            self.train_dataset = datasets.load_from_disk( "train_sft", )
+            self.train_dataset.set_format(type="torch", columns=["input_ids", "labels"])
+            self.val_dataset = datasets.load_from_disk( "val_sft", )
+            self.val_dataset.set_format(type="torch", columns=["input_ids", "labels"])
 
     def apply_chat_template(self, messages):
         """
@@ -182,7 +181,7 @@ class SFTDataModule(pl.LightningDataModule):
             )
             if next_end_pos == input_ids.shape[1]:
                 next_end_pos = input_ids.shape[1] - 1
-            labels[0, end_pos + 1 : next_end_pos + 1] = input_ids[
+            labels[0, end_pos - 1 : next_end_pos - 1] = input_ids[
                 0, end_pos:next_end_pos
             ]
 
