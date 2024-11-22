@@ -140,10 +140,14 @@ class MicroTraining(pl.LightningModule):
             betas=(self.args.beta1, self.args.beta2),
             fused=False,
         )
+        max_steps = self.args.max_steps
+        if self.args.max_steps == -1:
+            max_steps = self.trainer.max_epochs * self.trainer.estimated_stepping_batches
+        print(f"max_steps: {max_steps}")
         scheduler = ml_utils.optim.LinearWarmupCosineAnnealingLR(
             optimizer,
             warmup_steps=self.args.warmup_steps,
-            max_steps=self.trainer.max_steps,
+            max_steps=max_steps,
             eta_min=self.args.learning_rate * self.args.min_learning_rate_ratio,
         )
         return {
@@ -177,7 +181,6 @@ def main():
     if train_args.model_path != "":
         model.load_state_dict(torch.load(train_args.model_path))
 
-    model_wrapper = MicroTraining(model, tokenizer, train_args)
     if train_args.data_module_type == "fillseq":
         data_module = token_data.FillSeqDataModule(
             tokenizer,
@@ -192,6 +195,7 @@ def main():
             batch_size=train_args.batch_size,
             path=train_args.dataset_path,
         )
+    model_wrapper = MicroTraining(model, tokenizer, train_args)
     trainer.fit(
         model_wrapper,
         datamodule=data_module,
