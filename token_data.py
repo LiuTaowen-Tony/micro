@@ -203,14 +203,20 @@ class SFTDataModule(pl.LightningDataModule):
         return dataloader
 
     def state_dict(self):
-        return {
-            "train_dataset": self.train_dataset.state_dict(),
-            "val_dataset": self.val_dataset.state_dict(),
-        }
+        try:
+            return {
+                "train_dataset": self.train_dataset.state_dict(),
+                "val_dataset": self.val_dataset.state_dict(),
+            }
+        except:
+            return {}
 
     def load_state_dict(self, state_dict):
-        self.train_dataset.load_state_dict(state_dict["train_dataset"])
-        self.val_dataset.load_state_dict(state_dict["val_dataset"])
+        try:
+            self.train_dataset.load_state_dict(state_dict["train_dataset"])
+            self.val_dataset.load_state_dict(state_dict["val_dataset"])
+        except:
+            pass
 
 
 class FillSeqDataModule(pl.LightningDataModule):
