@@ -184,14 +184,14 @@ def main():
     if train_args.data_module_type == "fillseq":
         data_module = token_data.FillSeqDataModule(
             tokenizer,
-            max_seq_len=1024,
+            max_seq_len=model_config.max_seq_len,
             batch_size=train_args.batch_size,
             path=train_args.dataset_path,
         )
     elif train_args.data_module_type == "sft":
         data_module = token_data.SFTDataModule(
             tokenizer,
-            max_seq_len=1024,
+            max_seq_len=model_config.max_seq_len,
             batch_size=train_args.batch_size,
             path=train_args.dataset_path,
         )

@@ -103,6 +103,7 @@ class ChatWrapper(nn.Module):
         pred_token = torch.multinomial(F.softmax(logits, -1), 1) # [BATCH_SIZE, 1]
         return pred_token
 
+    @torch.no_grad()
     def generate(self, text: Union[str, List[str]], config: GenerationConfig = None):
         if config is None:
             config = GenerationConfig()
@@ -116,24 +117,23 @@ class ChatWrapper(nn.Module):
         batch_size = input_ids.size(0)
         self.model.setup_caches(batch_size, self.dtype, self.device)
         output = [[] for _ in range(input_ids.size(0))]
-        with torch.no_grad():
-            input = input_ids.to(torch.long)
-            ith_token = input_ids.size(1)
-            for i in range(config.max_length):
-                logits = self.model(input, input_pos=position_ids)
-                next_token_logits = logits[:, -1, :] 
-                if config.temperature == 0.0:
-                    next_token_ids = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
-                else:
-                    next_token_ids = self.top_k_top_p_filtering(next_token_logits / config.temperature, top_k=0, top_p=config.top_p)
-                for i, token_id in enumerate(next_token_ids):
-                    output[i].append(token_id.item())
+        input = input_ids.to(torch.long)
+        ith_token = input_ids.size(1)
+        for i in range(config.max_length):
+            logits = self.model(input, input_pos=position_ids)
+            next_token_logits = logits[:, -1, :] 
+            if config.temperature == 0.0:
+                next_token_ids = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
+            else:
+                next_token_ids = self.top_k_top_p_filtering(next_token_logits / config.temperature, top_k=0, top_p=config.top_p)
+            for i, token_id in enumerate(next_token_ids):
+                output[i].append(token_id.item())
 
-                input = next_token_ids
-                position_ids = torch.ones(1, dtype=torch.long) * ith_token
-                ith_token += 1
-                if torch.all(next_token_ids == self.tokenizer.eos_token_id):
-                    break
+            input = next_token_ids
+            position_ids = torch.ones(1, dtype=torch.long) * ith_token
+            ith_token += 1
+            if torch.all(next_token_ids == self.tokenizer.eos_token_id):
+                break
         self.model.remove_caches()
         self.model.train()
         return self.tokenizer.batch_decode(output, skip_special_tokens=True)

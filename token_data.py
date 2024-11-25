@@ -7,7 +7,8 @@ from ml_utils import path
 import ml_utils
 import datasets
 
-import ml_utils.data
+import ml_utils.data.data
+import ml_utils.data.nlp
 
 
 def load_tokenizer():
@@ -86,22 +87,33 @@ class SFTDataModule(pl.LightningDataModule):
         self.train_dataset = None
         self.val_dataset = None
         self.path = path
-        self.user_start_tokens = tokenizer.encode("<|user|>")
-        self.system_start_tokens = tokenizer.encode("<|assistant|>")
-        self.eos_token = tokenizer.encode("</s>")
+        self.user_start_tokens = tokenizer.encode("<|user|>", return_tensors="pt")[0]
+        self.system_start_tokens = tokenizer.encode("<|assistant|>", return_tensors="pt")[0]
+        self.eos_token = tokenizer.encode("</s>", return_tensors="pt")[0]
 
     def prepare_data(self):
+        that = self
+        class Transform(ml_utils.data.LiftedTransform):
+
+            def transform(self, messages):
+                text = ml_utils.data.nlp.apply_chat_template(messages)
+                tokenized = ml_utils.data.nlp.tokenize_encode_pad_max_len(
+                    that.tokenizer, that.max_seq_len, text
+                )
+                labels = ml_utils.data.nlp.labels_skip_user_prompts(
+                    that.system_start_tokens, that.eos_token, tokenized["input_ids"]
+                )
+                return {"input_ids": tokenized["input_ids"], "labels": labels, "attn_mask": tokenized["attn_mask"]}
+
+        transform = Transform()
+        print(transform.transform)
         if not os.path.exists("train_sft"):
             train_dataset = datasets.load_dataset(self.path, split="train_sft")
-            train_dataset = train_dataset.map(self.get_input_ids_labels,).select_columns(
-                ["input_ids", "labels"]
-            )
+            train_dataset = train_dataset.map(transform).select_columns(["input_ids", "labels", "attn_mask"])
             train_dataset.save_to_disk("train_sft")
         if not os.path.exists("val_sft"):
             eval_dataset = datasets.load_dataset(self.path, split="test_sft")
-            eval_dataset = eval_dataset.map(self.get_input_ids_labels,).select_columns(
-                ["input_ids", "labels"]
-            )
+            eval_dataset = eval_dataset.map(transform).select_columns(["input_ids", "labels", "attn_mask"])
             eval_dataset.save_to_disk("val_sft")
 
     def setup(self, stage: str = "fit"):
@@ -111,83 +123,6 @@ class SFTDataModule(pl.LightningDataModule):
             self.train_dataset.set_format(type="torch", columns=["input_ids", "labels"])
             self.val_dataset = datasets.load_from_disk( "val_sft", )
             self.val_dataset.set_format(type="torch", columns=["input_ids", "labels"])
-
-    def apply_chat_template(self, messages):
-        """
-        Convert messages to a formatted text string
-        """
-        text = ""
-        for message in messages:
-            if message["role"] == "user":
-                text += f"<|user|>{message['content']}</s>"
-            elif message["role"] == "assistant":
-                text += f"<|assistant|>{message['content']}</s>"
-        return text
-
-    def find_token_sequence(self, input_ids, token_sequence):
-        """
-        Find the starting indices of a specific token sequence in input_ids
-
-        :param input_ids: Input token ids tensor
-        :param token_sequence: Sequence of tokens to find
-        :return: Tensor of starting indices
-        """
-        seq_len = len(token_sequence)
-        matches = []
-
-        for i in range(input_ids.shape[1] - seq_len + 1):
-            if torch.equal(input_ids[0, i : i + seq_len], torch.tensor(token_sequence)):
-                matches.append(i)
-
-        return torch.tensor(matches, dtype=torch.long)
-
-    def get_input_ids_labels(self, item):
-        """
-        Process input messages to create input_ids and labels for training
-
-        :param item: Dictionary containing 'messages' list
-        :return: Dictionary with input_ids and labels
-        """
-        # Encode the entire conversation
-        messages = item["messages"]
-        text = self.apply_chat_template(messages)
-
-        # Encode with truncation and padding
-        input_ids = self.tokenizer.encode(
-            text,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_seq_len,
-            return_tensors="pt",
-            padding_side="left",
-        )
-        # Initialize labels with -100 (ignore tokens)
-        labels = torch.full_like(input_ids, -100)
-
-        # Find system response start positions
-        system_start_positions = self.find_token_sequence(
-            input_ids, self.system_start_tokens
-        )
-        eos_positions = self.find_token_sequence(input_ids, self.eos_token)
-
-        # Process each system response
-        for start_pos in system_start_positions:
-            # Find the end of this system response
-            end_pos = start_pos + len(self.system_start_tokens)
-
-            # Look for next user start or end of sequence
-            next_end_pos = min(
-                eos_positions[eos_positions > end_pos], default=input_ids.shape[1]
-            )
-            if next_end_pos == input_ids.shape[1]:
-                next_end_pos = input_ids.shape[1] - 1
-            labels[0, end_pos - 1 : next_end_pos - 1] = input_ids[
-                0, end_pos:next_end_pos
-            ]
-
-        assert input_ids.shape == labels.shape
-        assert input_ids.shape[1] == self.max_seq_len
-        return {"input_ids": input_ids[0], "labels": labels[0]}
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(
@@ -236,7 +171,7 @@ class FillSeqDataModule(pl.LightningDataModule):
                 self.path, split="train", streaming=True)
             val_raw_data = datasets.load_dataset(
                 self.path, split="validation", streaming=True)
-            val_raw_data = ml_utils.data.IterableSubset(val_raw_data, 1000)
+            val_raw_data = ml_utils.data.data.IterableSubset(val_raw_data, 1000)
             self.train_dataset = FillSeqDataset(
                 train_raw_data, self.tokenizer, self.max_seq_len)
             self.val_dataset = FillSeqDataset(
