@@ -49,3 +49,12 @@ The language model will re-use the `micro_lm` base model, and the vision part, w
 starting point.
 
 
+5th Dec.
+
+Now running DPO for the model. Haven't got a chance to evaluate the model on common NLP tasks. 
+
+Next steps:
+
+1. train MaskGIT
+2. DPO for the model
+3. Long COT for the model, perform long math operations

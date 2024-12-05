@@ -11,16 +11,6 @@ import ml_utils.data.data
 import ml_utils.data.nlp
 
 
-def load_tokenizer():
-    file_path = path.relative_path("trained_tokenizers/v1.json", __file__)
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file=file_path)
-    tokenizer.unk_token_id = 0
-    tokenizer.sep_token_id = 1
-    tokenizer.pad_token_id = 2
-    tokenizer.eos_token_id = 2
-    tokenizer.padding_side = "left"
-
-    return tokenizer
 
 
 def data_collator(tokenizer, max_seq_len, batch):
@@ -198,7 +188,8 @@ class FillSeqDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    tokenizer = load_tokenizer()
+    import lm_tokenizer
+    tokenizer = lm_tokenizer.load_tokenizer()
     # data_module = FillSeqDataModule(tokenizer, 8, 512, "DKYoon/SlimPajama-6B")
     # data_module.setup()
     # train_loader = data_module.train_dataloader()

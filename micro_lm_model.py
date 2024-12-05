@@ -1,8 +1,9 @@
+import os
 import json
 import copy
 
 import torch
-from torch import nn, Tensor 
+from torch import nn, Tensor
 from typing import Optional, Tuple
 import dataclasses
 
@@ -30,11 +31,24 @@ import dataclasses
 #         # x: (batch_size, head_size, seq_len, dim)
 #         return (self.sin[:, :, :seq_len, :].to(x.dtype) , self.cos[:, :, :seq_len, :].to(x.dtype))
 
-def from_json(model_root):
-    with open(model_root, 'r') as f:
+
+def get_model_from_json(model_root):
+    with open(model_root, "r") as f:
         config = json.load(f)
-    return get_model(**config)
-    
+    return get_model_from_config(ModelConfig(**config))
+
+
+def load_model_from_path(model_path):
+    model = get_model_from_json(os.path.join(model_path, "model.json"))
+    model.load_state_dict(torch.load(os.path.join(model_path, "model.pth"), weights_only=True))
+    return model
+
+def save_model(model: "TransformerDecoder", model_root):
+    os.makedirs(model_root, exist_ok=True)
+    with open(os.path.join(model_root, "model.json"), "w") as f:
+        json.dump(dataclasses.asdict(model.config), f)
+    torch.save(model.state_dict(), os.path.join(model_root, "model.pth"))
+
 
 @dataclasses.dataclass
 class ModelConfig:
@@ -50,7 +64,8 @@ class ModelConfig:
     pos_emb_base: int = 10000
     pos_emb_max_seq_len: int = 4096
 
-def get_model(model_config: ModelConfig = None):
+
+def get_model_from_config(model_config: ModelConfig = None):
     if model_config is None:
         model_config = ModelConfig()
     num_heads = model_config.num_heads
@@ -67,23 +82,31 @@ def get_model(model_config: ModelConfig = None):
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
-        q_proj=nn.Linear(hidden_size, num_heads * head_dim, bias=model_config.attn_bias),
-        k_proj=nn.Linear(hidden_size, num_kv_heads * head_dim, bias=model_config.attn_bias),
-        v_proj=nn.Linear(hidden_size, num_kv_heads * head_dim, bias=model_config.attn_bias),
+        q_proj=nn.Linear(
+            hidden_size, num_heads * head_dim, bias=model_config.attn_bias
+        ),
+        k_proj=nn.Linear(
+            hidden_size, num_kv_heads * head_dim, bias=model_config.attn_bias
+        ),
+        v_proj=nn.Linear(
+            hidden_size, num_kv_heads * head_dim, bias=model_config.attn_bias
+        ),
         output_proj=nn.Linear(hidden_size, hidden_size, bias=model_config.attn_bias),
-        pos_embeddings=RotaryPositionalEmbeddings(head_dim, model_config.pos_emb_max_seq_len, model_config.pos_emb_base),
+        pos_embeddings=RotaryPositionalEmbeddings(
+            head_dim, model_config.pos_emb_max_seq_len, model_config.pos_emb_base
+        ),
         max_seq_len=max_seq_len,
         attn_dropout=attn_dropout,
     )
     layer = TransformerDecoderLayer(
-        attn = attn,
-        mlp = MLP(hidden_size),
-        sa_norm = nn.RMSNorm(hidden_size),
-        mlp_norm = nn.RMSNorm(hidden_size)
+        attn=attn,
+        mlp=MLP(hidden_size),
+        sa_norm=nn.RMSNorm(hidden_size),
+        mlp_norm=nn.RMSNorm(hidden_size),
     )
     decoder = TransformerDecoder(
-        tok_embeddings = torch.nn.Embedding(vocab_size, hidden_size),
-        layer = layer,
+        tok_embeddings=torch.nn.Embedding(vocab_size, hidden_size),
+        layer=layer,
         num_layers=num_layers,
         max_seq_len=max_seq_len,
         num_heads=num_heads,
@@ -93,6 +116,7 @@ def get_model(model_config: ModelConfig = None):
         lm_head=nn.Linear(hidden_size, vocab_size),
     )
     return decoder
+
 
 class MLP(nn.Module):
     def __init__(self, hidden_size):
@@ -111,7 +135,6 @@ class MLP(nn.Module):
         return down_proj
 
 
-
 class KVCache(nn.Module):
     def __init__(
         self,
@@ -125,10 +148,14 @@ class KVCache(nn.Module):
         super().__init__()
         cache_shape = (batch_size, num_heads, max_seq_len, head_dim)
         self.register_buffer(
-            "k_cache", torch.zeros(cache_shape, dtype=dtype, device=device), persistent=False
+            "k_cache",
+            torch.zeros(cache_shape, dtype=dtype, device=device),
+            persistent=False,
         )
         self.register_buffer(
-            "v_cache", torch.zeros(cache_shape, dtype=dtype, device=device), persistent=False
+            "v_cache",
+            torch.zeros(cache_shape, dtype=dtype, device=device),
+            persistent=False,
         )
         self.batch_size = batch_size
 
@@ -136,7 +163,6 @@ class KVCache(nn.Module):
         """Reset the cache to zero."""
         self.k_cache.zero_()
         self.v_cache.zero_()
-
 
     def update(
         self, input_pos: Tensor, k_val: Tensor, v_val: Tensor
@@ -308,6 +334,7 @@ class CausalSelfAttention(nn.Module):
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
         return self.output_proj(output)
 
+
 class RotaryPositionalEmbeddings(nn.Module):
     def __init__(
         self,
@@ -453,7 +480,9 @@ class TransformerDecoder(nn.Module):
         self.lm_head = lm_head
         self.config = config
 
-    def setup_caches(self, batch_size: int, dtype: torch.dtype, device: torch.device) -> None:
+    def setup_caches(
+        self, batch_size: int, dtype: torch.dtype, device: torch.device
+    ) -> None:
         """Setup key value caches for attention calculation.
 
         Args:
@@ -467,13 +496,15 @@ class TransformerDecoder(nn.Module):
                 num_heads=self.num_heads,
                 head_dim=self.head_dim,
                 dtype=dtype,
-                device=device
+                device=device,
             )
 
         # causal_mask is used during inference to ensure we're attending
         # to the right tokens
         self.causal_mask = torch.tril(
-            torch.ones(self.max_seq_len, self.max_seq_len, dtype=torch.bool, device=device)
+            torch.ones(
+                self.max_seq_len, self.max_seq_len, dtype=torch.bool, device=device
+            )
         )
 
     def remove_caches(self) -> None:

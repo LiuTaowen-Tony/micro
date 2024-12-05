@@ -1,5 +1,4 @@
 import argparse
-import os
 from tokenizers import Tokenizer, pre_tokenizers, decoders, normalizers, Regex
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer

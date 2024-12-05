@@ -7,16 +7,17 @@ from ml_utils.args import DataClassArgumentParser
 from chat_wrapper import ChatWrapper
 from pytorch_lightning.loggers import WandbLogger
 import torch
-import micro_model
-from micro_model import ModelConfig
-import token_data
+import micro_lm_model
+from micro_lm_model import ModelConfig
+import pretrain_sft_lm_data
 import ml_utils
 import os
 from lightning.pytorch.utilities import grad_norm
+import lm_tokenizer
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-torch.set_float32_matmul_precision('medium')
+torch.set_float32_matmul_precision("medium")
 
 
 @dataclasses.dataclass()
@@ -65,7 +66,7 @@ class MicroTraining(pl.LightningModule):
 
     def __init__(
         self,
-        model: micro_model.TransformerDecoder,
+        model: micro_lm_model.TransformerDecoder,
         tokenizer: PreTrainedTokenizerFast,
         train_args: TrainArgs,
     ):
@@ -86,8 +87,7 @@ class MicroTraining(pl.LightningModule):
         logits = self.model(tokens=input_ids)
         loss = self.loss(logits.view(-1, logits.size(-1)), labels.view(-1))
         self.log("train_loss", loss, prog_bar=True)
-        self.log(
-            "lr", self.trainer.optimizers[0].param_groups[0]["lr"], prog_bar=True)
+        self.log("lr", self.trainer.optimizers[0].param_groups[0]["lr"], prog_bar=True)
         if loss.item() > self.prev_loss * 2:
             print(f"outlier loss: {loss.item()}")
         else:
@@ -117,8 +117,7 @@ class MicroTraining(pl.LightningModule):
         self.log_dict(norms)
 
     def configure_optimizers(self):
-        param_dict = {pn: p for pn, p in self.named_parameters()
-                      if p.requires_grad}
+        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
@@ -142,7 +141,9 @@ class MicroTraining(pl.LightningModule):
         )
         max_steps = self.args.max_steps
         if self.args.max_steps == -1:
-            max_steps = self.trainer.max_epochs * self.trainer.estimated_stepping_batches
+            max_steps = (
+                self.trainer.max_epochs * self.trainer.estimated_stepping_batches
+            )
         print(f"max_steps: {max_steps}")
         scheduler = ml_utils.optim.LinearWarmupCosineAnnealingLR(
             optimizer,
@@ -157,6 +158,7 @@ class MicroTraining(pl.LightningModule):
                 "interval": "step",
             },
         }
+
 
 # Main training function
 def main():
@@ -176,25 +178,22 @@ def main():
         gradient_clip_val=train_args.gradient_clip_val,
     )
     # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
-    tokenizer = token_data.load_tokenizer()
-    model = micro_model.get_model(model_config)
+    tokenizer = lm_tokenizer.load_tokenizer()
+    model = micro_lm_model.get_model_from_config(model_config)
     if train_args.model_path != "":
         model.load_state_dict(torch.load(train_args.model_path))
 
     if train_args.data_module_type == "fillseq":
-        data_module = token_data.FillSeqDataModule(
-            tokenizer,
-            max_seq_len=model_config.max_seq_len,
-            batch_size=train_args.batch_size,
-            path=train_args.dataset_path,
-        )
+        data_module_type = pretrain_sft_lm_data.FillSeqDataModule
     elif train_args.data_module_type == "sft":
-        data_module = token_data.SFTDataModule(
-            tokenizer,
-            max_seq_len=model_config.max_seq_len,
-            batch_size=train_args.batch_size,
-            path=train_args.dataset_path,
-        )
+        data_module_type = pretrain_sft_lm_data.SFTDataModule
+
+    data_module = data_module_type(
+        tokenizer,
+        max_seq_len=model_config.max_seq_len,
+        batch_size=train_args.batch_size,
+        path=train_args.dataset_path,
+    )
     model_wrapper = MicroTraining(model, tokenizer, train_args)
     trainer.fit(
         model_wrapper,
@@ -202,6 +201,7 @@ def main():
         ckpt_path=train_args.ckpt_path if train_args.ckpt_path else None,
     )
     torch.save(model.state_dict(), train_args.output_path)
+
 
 if __name__ == "__main__":
     main()
