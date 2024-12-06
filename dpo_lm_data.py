@@ -46,7 +46,7 @@ def get_se(split, silent=False, cache_dir: str = None) -> Dict[str, DPOPromptIte
 
     data = defaultdict(dict)
     for row in tqdm.tqdm(dataset, desc="Processing SE", disable=silent):
-        prompt = "\n\nHuman: " + row["question"] + "\n\nAssistant:"
+        prompt = "\n\n<|user|>: " + row["question"] + "\n\n<|assistant|>:"
         responses = [" " + a["text"] for a in row["answers"]]
         scores = [a["pm_score"] for a in row["answers"]]
 
@@ -78,7 +78,7 @@ def get_shp(
 
     data = defaultdict(lambda: defaultdict(list))
     for row in tqdm.tqdm(dataset, desc="Processing SHP", disable=silent):
-        prompt = "\n\nHuman: " + row["history"] + "\n\nAssistant:"
+        prompt = "\n\n<|user|>: " + row["history"] + "\n\n<|assistant|>:"
         responses = [" " + row["human_ref_A"], " " + row["human_ref_B"]]
         scores = [row["score_A"], row["score_B"]]
         if prompt in data:
@@ -126,8 +126,8 @@ def get_hh(
     }
 
     Prompts should be structured as follows:
-      \n\nHuman: <prompt>\n\nAssistant:
-    Multiple turns are allowed, but the prompt should always start with \n\nHuman: and end with \n\nAssistant:.
+      \n\n<|human|>: <prompt>\n\n<|assistant|>:
+    Multiple turns are allowed, but the prompt should always start with \n\nHuman: and end with \n\n<|assistant|>:.
 
     For this dataset, the sft_target is just the chosen response.
     """
@@ -146,6 +146,7 @@ def get_hh(
     data = defaultdict(lambda: defaultdict(list))
     for row in tqdm.tqdm(dataset, desc="Processing HH", disable=silent):
         prompt, chosen, rejected = split_prompt_and_responses(row)
+        prompt = prompt.replace("Human:", "<|user|>:").replace("Assistant:", "<|assistant|>:")
         responses = [chosen, rejected]
         n_responses = len(data[prompt]["responses"])
         data[prompt]["pairs"].append((n_responses, n_responses + 1))

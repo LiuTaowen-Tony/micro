@@ -318,7 +318,12 @@ class CausalSelfAttention(nn.Module):
 
         # shape: [b, 1, s, s]
         if mask is not None:
-            mask = mask[:, None, :, :]
+            if mask.dim() == 3:
+                mask = mask[:, None, :, :]
+            else:
+                raise ValueError(
+                    f"Mask should have shape [b x s x s], found {mask.shape}"
+                )
 
         # Flash attention from https://pytorch.org/blog/accelerating-large-language-models/
         output = nn.functional.scaled_dot_product_attention(
