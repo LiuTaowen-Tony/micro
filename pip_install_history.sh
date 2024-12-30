@@ -7,3 +7,9 @@ command pip3 install lightning # Wed 23 Oct 22:31:10 BST 2024
 command pip3 install zstandard # Fri 25 Oct 19:47:05 BST 2024
 command pip3 install datasets # Fri 25 Oct 19:47:12 BST 2024
 command pip3 install matplotlib # Sat 23 Nov 15:54:01 GMT 2024
+command pip3 install torchvision # Tue 10 Dec 01:56:38 GMT 2024
+command pip3 install webdataset # Tue 10 Dec 01:56:49 GMT 2024
+command pip3 install einops # Tue 10 Dec 02:00:27 GMT 2024
+command pip3 install img2dataset # Tue 10 Dec 02:33:12 GMT 2024
+command pip3 install kagglehub # Sat 28 Dec 05:44:20 GMT 2024
+command pip3 install torch-summary # Sat 28 Dec 16:04:33 GMT 2024

@@ -1,8 +1,8 @@
 from transformers import PreTrainedTokenizerFast
-from ml_utils import path
+import ml_utils.misc as misc
 
 def load_tokenizer():
-    file_path = path.relative_path("trained_tokenizers/v1.json", __file__)
+    file_path = misc.relative_path("trained_models/text_tokenizer_v1/v1.json", __file__)
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=file_path)
     tokenizer.unk_token_id = 0
     tokenizer.sep_token_id = 1

@@ -3,7 +3,7 @@ import datasets
 import torch
 from transformers import PreTrainedTokenizerFast
 import pytorch_lightning as pl
-from ml_utils.data.nlp import strip_html_tags, extract_anthropic_prompt, pad_to_length
+from sequence_modelling import strip_html_tags, extract_anthropic_prompt, pad_to_length
 from torch.nn.utils.rnn import pad_sequence
 from collections import defaultdict
 import tqdm

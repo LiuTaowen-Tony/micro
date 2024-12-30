@@ -8,10 +8,11 @@ import json
 import micro_lm_model
 import dataclasses
 
+
 @dataclasses.dataclass(frozen=True)
 class GenerationConfig:
     generation_max_length: int = 100
-    temperature: float = 1.0 
+    temperature: float = 1.0
     top_p: float = 0.8
     repetition_penalty: float = 1.0
 
@@ -21,7 +22,7 @@ class GenerationConfig:
             return GenerationConfig(**data)
 
 
-class RepetitionPenaltyLogitsProcessor():
+class RepetitionPenaltyLogitsProcessor:
     r"""
     [`LogitsProcessor`] enforcing an exponential penalty on repeated sequences.
 
@@ -33,11 +34,15 @@ class RepetitionPenaltyLogitsProcessor():
 
     def __init__(self, penalty: float):
         if not isinstance(penalty, float) or not (penalty > 0):
-            raise ValueError(f"`penalty` has to be a strictly positive float, but is {penalty}")
+            raise ValueError(
+                f"`penalty` has to be a strictly positive float, but is {penalty}"
+            )
 
         self.penalty = penalty
 
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+    def __call__(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+    ) -> torch.FloatTensor:
         score = torch.gather(scores, 1, input_ids)
 
         # if score < 0 then repetition penalty has to be multiplied to reduce the previous token probability
@@ -46,11 +51,12 @@ class RepetitionPenaltyLogitsProcessor():
         scores.scatter_(1, input_ids, score)
         return scores
 
-class ChatWrapper(nn.Module):
+
+class LMSampler(nn.Module):
 
     def __init__(
         self,
-        model: micro_lm_model.TransformerDecoder,
+        model: micro_lm_model.LMDecoder,
         tokenizer: PreTrainedTokenizerFast,
         dtype: torch.dtype,
         device: torch.device,
@@ -67,29 +73,33 @@ class ChatWrapper(nn.Module):
     def show_output_probs(self, text: str):
         encoded = self.tokenizer(text, return_tensors="pt")
         input_ids = encoded["input_ids"].to(self.device)
-        logits = self.model(input_ids)[:,-1,:]
+        logits = self.model(input_ids)[:, -1, :]
         probs = F.softmax(logits, dim=-1)
         top_10 = torch.topk(probs, 10)
         result = []
-        for (token, prob) in zip(top_10.indices, top_10.values):
+        for token, prob in zip(top_10.indices, top_10.values):
             result.append((self.tokenizer.decode(token), prob))
         return result
 
-    def top_k_top_p_filtering(self, logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
-        """ Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
-            Args:
-                logits: logits distribution shape (vocabulary size)
-                top_k >0: keep only top k tokens with highest probability (top-k filtering).
-                top_p >0.0: keep the top tokens with cumulative probability >= top_p (nucleus filtering).
-                    Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
-            
-            Basic outline taken from https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
+    def top_k_top_p_filtering(
+        self, logits, top_k=0, top_p=0.0, filter_value=-float("Inf")
+    ):
+        """Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
+        Args:
+            logits: logits distribution shape (vocabulary size)
+            top_k >0: keep only top k tokens with highest probability (top-k filtering).
+            top_p >0.0: keep the top tokens with cumulative probability >= top_p (nucleus filtering).
+                Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
+
+        Basic outline taken from https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
         """
         assert logits.dim() == 2  # [BATCH_SIZE, VOCAB_SIZE]
         top_k = min(top_k, logits.size(-1))  # Safety check
         if top_k > 0:
             # Remove all tokens with a probability less than the last token of the top-k
-            indices_to_remove = logits < torch.topk(logits, top_k, dim=1)[0][..., -1, None]
+            indices_to_remove = (
+                logits < torch.topk(logits, top_k, dim=1)[0][..., -1, None]
+            )
             logits[indices_to_remove] = filter_value
 
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
@@ -106,15 +116,19 @@ class ChatWrapper(nn.Module):
         # Then reverse the sorting process by mapping back sorted_logits to their original position
         logits = torch.gather(sorted_logits, 1, sorted_indices.argsort(-1))
 
-        pred_token = torch.multinomial(F.softmax(logits, -1), 1) # [BATCH_SIZE, 1]
+        pred_token = torch.multinomial(F.softmax(logits, -1), 1)  # [BATCH_SIZE, 1]
         return pred_token
 
     def generate_ids(
         self, input_ids: torch.LongTensor, config: GenerationConfig = None
     ):
+        assert input_ids.dim() == 2
         if config is None:
             config = GenerationConfig()
-        position_ids = torch.arange(0, input_ids.size(1),)
+        position_ids = torch.arange(
+            0,
+            input_ids.size(1),
+        )
 
         self.model.eval()
         batch_size = input_ids.size(0)
@@ -124,11 +138,13 @@ class ChatWrapper(nn.Module):
         ith_token = input_ids.size(1)
         for i in range(config.generation_max_length):
             logits = self.model(input, input_pos=position_ids)
-            next_token_logits = logits[:, -1, :] 
+            next_token_logits = logits[:, -1, :]
             if config.temperature == 0.0:
                 next_token_ids = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
             else:
-                next_token_ids = self.top_k_top_p_filtering(next_token_logits / config.temperature, top_k=0, top_p=config.top_p)
+                next_token_ids = self.top_k_top_p_filtering(
+                    next_token_logits / config.temperature, top_k=0, top_p=config.top_p
+                )
             for i, token_id in enumerate(next_token_ids):
                 output[i].append(token_id.item())
 

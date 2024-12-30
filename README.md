@@ -1,5 +1,19 @@
 # micro
 
+## Structure
+
+Models are mathematical models. These don't care the underlying data or tasks. And the training process is not related to the model itself. However, sampling from the model is partial defined in the model. If the sampling process is complicated, we define a sampler for the model.
+
+The training process is defined in algorithm. The algorithm define how to train, what is the loss and how to optimize the model. The algorithm is related to the data and the task.
+
+The sampling process is defined in sampler.
+
+Training log folder is for storing training logs.
+
+Trained models are stored in trained model folder.
+
+To use a model, we will need the model config and model parameter. The model config is a json file that defines the model structure. The model parameter is a torch file that stores the model parameters.
+
 ## GOALS
 
 - [x] Train a base LLM model

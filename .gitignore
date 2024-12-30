@@ -50,3 +50,8 @@ sft_dataset/
 train_sft/
 val_sft/
 dpo-training/
+dpo_model/
+images/
+vqvae_tokenizer/
+vqvae-ffhq128/
+data/

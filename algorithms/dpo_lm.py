@@ -4,16 +4,15 @@ import torch
 from torch import nn
 import pytorch_lightning as pl
 from dataclasses import dataclass
-import chat_wrapper
+import sampler.lm_sampler as lm_sampler
 import lm_tokenizer
-import micro_lm_model
+from model import micro_lm_model
 from ml_utils.args import DataClassArgumentParser
 import ml_utils.data
-from ml_utils.data.nlp import pad_to_length, boolean_triangular_mask
+from sequence_modelling import pad_to_length, boolean_triangular_mask
 from ml_utils.misc import disable_dropout
 import ml_utils.optim
 from transformers import PreTrainedTokenizerFast
-from ml_utils.dist import all_gather_concat_pl, rank0_print
 from pytorch_lightning.loggers import WandbLogger
 from typing import Dict, Union, List, Tuple
 import dpo_lm_data
@@ -217,7 +216,9 @@ class DPOModule(pl.LightningModule):
         return self.policy(x)
 
     def concatenated_forward(
-        self, model: micro_lm_model.TransformerDecoder, batch: Dict[str, Union[List, torch.LongTensor]]
+        self,
+        model: micro_lm_model.LMDecoder,
+        batch: Dict[str, Union[List, torch.LongTensor]],
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         """Run the given model on the given batch of inputs, concatenating the chosen and rejected inputs together.
 
@@ -282,9 +283,9 @@ class DPOModule(pl.LightningModule):
 
             reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
-            chosen_rewards = all_gather_concat_pl(self,chosen_rewards)
-            rejected_rewards = all_gather_concat_pl(self,rejected_rewards)
-            reward_accuracies = all_gather_concat_pl(self,reward_accuracies)
+            # chosen_rewards = all_gather_concat_pl(self,chosen_rewards)
+            # rejected_rewards = all_gather_concat_pl(self,rejected_rewards)
+            # reward_accuracies = all_gather_concat_pl(self,reward_accuracies)
 
             metrics[f"rewards_{train_test}/chosen"] = (
                 chosen_rewards.cpu().numpy().tolist()
@@ -299,7 +300,7 @@ class DPOModule(pl.LightningModule):
                 (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
             )
 
-            policy_rejected_logps = all_gather_concat_pl(self,policy_rejected_logps.detach())
+            # policy_rejected_logps = all_gather_concat_pl(self,policy_rejected_logps.detach())
             metrics[f"logps_{train_test}/rejected"] = (
                 policy_rejected_logps.cpu().numpy().tolist()
             )
@@ -314,12 +315,12 @@ class DPOModule(pl.LightningModule):
 
             losses = -policy_chosen_logps
 
-        policy_chosen_logps = all_gather_concat_pl(self,policy_chosen_logps.detach())
+        # policy_chosen_logps = all_gather_concat_pl(self,policy_chosen_logps.detach())
         metrics[f"logps_{train_test}/chosen"] = (
             policy_chosen_logps.cpu().numpy().tolist()
         )
 
-        all_devices_losses = all_gather_concat_pl(self,losses.detach())
+        # all_devices_losses = all_gather_concat_pl(self,losses.detach())
         all_devices_losses = losses
         metrics[f"loss/{train_test}"] = all_devices_losses.cpu().detach().numpy().tolist()
 
@@ -328,10 +329,10 @@ class DPOModule(pl.LightningModule):
     def get_batch_samples(self, batch: Dict[str, torch.LongTensor]) -> Tuple[List[str], List[str]]:
         """Generate samples from the policy (and reference model, if doing DPO training) for the given batch of inputs."""
 
-        policy_chat = chat_wrapper.ChatWrapper(
+        policy_chat = lm_sampler.LMSampler(
             self.policy, self.tokenizer, torch.bfloat16, self.device
         )
-        reference_chat = chat_wrapper.ChatWrapper(
+        reference_chat = lm_sampler.LMSampler(
             self.reference, self.tokenizer, torch.bfloat16, self.device
         )
         # b, s = batch["chosen_input_ids"].shape
@@ -341,7 +342,7 @@ class DPOModule(pl.LightningModule):
         # print(batch)
         policy_output = policy_chat.generate_ids(
             batch["prompt_input_ids"],
-            config=chat_wrapper.GenerationConfig(
+            config=lm_sampler.GenerationConfig(
                 generation_max_length=256, temperature=0.9
             ),
         )
@@ -349,7 +350,7 @@ class DPOModule(pl.LightningModule):
             policy_output, self.config.max_seq_len, self.tokenizer.pad_token_id
         )
         # print(policy_output)
-        policy_output = all_gather_concat_pl(self,policy_output)
+        # policy_output = all_gather_concat_pl(self,policy_output)
         policy_output_decoded = self.tokenizer.batch_decode(
             policy_output, skip_special_tokens=True
         )
@@ -358,14 +359,14 @@ class DPOModule(pl.LightningModule):
         if self.loss_config.loss_name in {"dpo", "ipo"}:
             reference_output = reference_chat.generate_ids(
                 batch["prompt_input_ids"],
-                config=chat_wrapper.GenerationConfig(
+                config=lm_sampler.GenerationConfig(
                     generation_max_length=256, temperature=0.9
                 ),
             )
             reference_output = pad_to_length(
                 reference_output, self.config.max_seq_len, self.tokenizer.pad_token_id
             )
-            reference_output = all_gather_concat_pl(self,reference_output)
+            # reference_output = all_gather_concat_pl(self,reference_output)
             reference_output_decoded = self.tokenizer.batch_decode(
                 reference_output, skip_special_tokens=True
             )
@@ -380,15 +381,16 @@ class DPOModule(pl.LightningModule):
             "loss": loss,
             **metrics,
         }
-        if self.config.sample_during_eval and batch_idx % 1000 == 0:
+        if self.batch_idx % 10 == 0:
             policy_samples, reference_samples = self.get_batch_samples(batch)
             if self.local_rank == 0:
                 prompts = self.tokenizer.batch_decode(batch["prompt_input_ids"], skip_special_tokens=True)
+                min_len = min(len(prompts), len(policy_samples), len(reference_samples))
                 df = pd.DataFrame(
                     {
-                        "prompt": prompts[:5],
-                        "policy_samples": policy_samples[:5],
-                        "reference_samples": reference_samples[:5],
+                        "prompt": prompts[:min_len],
+                        "policy_samples": policy_samples[:min_len],
+                        "reference_samples": reference_samples[:min_len],
                     }
                 )
                 self.wandb_logger.log_table("samples", dataframe=df)
@@ -399,11 +401,9 @@ class DPOModule(pl.LightningModule):
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         if self.local_rank == 0:
             print(metrics)
-        # self.log_dict(metrics, on_step=True, rank_zero_only=True)
+        metrics_mean = {k: sum(v) / len(v) for k, v in metrics.items()}
+        self.log_dict(metrics_mean, on_step=True, rank_zero_only=True)
         return loss
-
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=1e-3)
 
     def setup(self, stage: str = "fit"):
         split = "test"

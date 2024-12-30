@@ -3,12 +3,10 @@ import numpy as np
 import torch
 import pytorch_lightning as pl
 from transformers import PreTrainedTokenizerFast
-from ml_utils import path
 import ml_utils
 import datasets
-
-import ml_utils.data.data
-import ml_utils.data.nlp
+import ml_utils.data
+import sequence_modelling
 
 
 
@@ -86,11 +84,11 @@ class SFTDataModule(pl.LightningDataModule):
         class Transform(ml_utils.data.LiftedTransform):
 
             def transform(self, messages):
-                text = ml_utils.data.nlp.apply_chat_template(messages)
-                tokenized = ml_utils.data.nlp.tokenize_encode_pad_max_len(
+                text = sequence_modelling.apply_chat_template(messages)
+                tokenized = sequence_modelling.tokenize_encode_pad_max_len(
                     that.tokenizer, that.max_seq_len, text
                 )
-                labels = ml_utils.data.nlp.labels_skip_user_prompts(
+                labels = sequence_modelling.labels_skip_user_prompts(
                     that.system_start_tokens, that.eos_token, tokenized["input_ids"]
                 )
                 return {"input_ids": tokenized["input_ids"], "labels": labels, "attn_mask": tokenized["attn_mask"]}
@@ -161,7 +159,7 @@ class FillSeqDataModule(pl.LightningDataModule):
                 self.path, split="train", streaming=True)
             val_raw_data = datasets.load_dataset(
                 self.path, split="validation", streaming=True)
-            val_raw_data = ml_utils.data.data.IterableSubset(val_raw_data, 1000)
+            val_raw_data = ml_utils.data.IterableSubset(val_raw_data, 1000)
             self.train_dataset = FillSeqDataset(
                 train_raw_data, self.tokenizer, self.max_seq_len)
             self.val_dataset = FillSeqDataset(

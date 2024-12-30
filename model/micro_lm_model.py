@@ -35,7 +35,7 @@ import dataclasses
 def get_model_from_json(model_root):
     with open(model_root, "r") as f:
         config = json.load(f)
-    return get_model_from_config(ModelConfig(**config))
+    return get_model_from_config(LMDecoderConfig(**config))
 
 
 def load_model_from_path(model_path):
@@ -43,7 +43,8 @@ def load_model_from_path(model_path):
     model.load_state_dict(torch.load(os.path.join(model_path, "model.pth"), weights_only=True))
     return model
 
-def save_model(model: "TransformerDecoder", model_root):
+
+def save_model(model: "LMDecoder", model_root):
     os.makedirs(model_root, exist_ok=True)
     with open(os.path.join(model_root, "model.json"), "w") as f:
         json.dump(dataclasses.asdict(model.config), f)
@@ -51,7 +52,7 @@ def save_model(model: "TransformerDecoder", model_root):
 
 
 @dataclasses.dataclass
-class ModelConfig:
+class LMDecoderConfig:
     num_heads: int = 16
     head_dim: int = 64
     num_kv_heads: int = 8
@@ -65,9 +66,9 @@ class ModelConfig:
     pos_emb_max_seq_len: int = 4096
 
 
-def get_model_from_config(model_config: ModelConfig = None):
+def get_model_from_config(model_config: LMDecoderConfig = None):
     if model_config is None:
-        model_config = ModelConfig()
+        model_config = LMDecoderConfig()
     num_heads = model_config.num_heads
     head_dim = model_config.head_dim
     num_kv_heads = model_config.num_kv_heads
@@ -104,7 +105,7 @@ def get_model_from_config(model_config: ModelConfig = None):
         sa_norm=nn.RMSNorm(hidden_size),
         mlp_norm=nn.RMSNorm(hidden_size),
     )
-    decoder = TransformerDecoder(
+    decoder = LMDecoder(
         tok_embeddings=torch.nn.Embedding(vocab_size, hidden_size),
         layer=layer,
         num_layers=num_layers,
@@ -460,7 +461,8 @@ def _get_clones(module: nn.Module, n: int) -> nn.ModuleList:
     return nn.ModuleList([copy.deepcopy(module) for i in range(n)])
 
 
-class TransformerDecoder(nn.Module):
+class LMDecoder(nn.Module):
+
     def __init__(
         self,
         tok_embeddings: nn.Embedding,
@@ -471,7 +473,7 @@ class TransformerDecoder(nn.Module):
         head_dim: int,
         norm: nn.Module,
         lm_head: nn.Module,
-        config: ModelConfig,
+        config: LMDecoderConfig,
     ) -> None:
         super().__init__()
 

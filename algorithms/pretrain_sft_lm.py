@@ -4,11 +4,11 @@ import pytorch_lightning as pl
 import dataclasses
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from ml_utils.args import DataClassArgumentParser
-from chat_wrapper import ChatWrapper
+from sampler.lm_sampler import LMSampler
 from pytorch_lightning.loggers import WandbLogger
 import torch
-import micro_lm_model
-from micro_lm_model import ModelConfig
+from model import lm_decoder
+from model.lm_decoder import LMDecoderConfig
 import pretrain_sft_lm_data
 import ml_utils
 import os
@@ -24,12 +24,12 @@ torch.set_float32_matmul_precision("medium")
 class TrainArgs:
     total_batch_size: int = 384
     accumulate_grad_batches: int = 4
-    learning_rate: float = 6e-4
+    learning_rate: float = 5e-4
     weight_decay: float = 1e-1
     beta1: float = 0.9
     beta2: float = 0.999
     warmup_steps: int = 2000
-    seed: int = 42
+    seed: int = 1
     batch_size: int = -1
     max_steps: int = 60000
     val_check_interval: int = 3000
@@ -45,9 +45,9 @@ class TrainArgs:
 
 
 # Argument parser
-def parse_args() -> Tuple[TrainArgs, ModelConfig]:
+def parse_args() -> Tuple[TrainArgs, LMDecoderConfig]:
     train_args, model_config = DataClassArgumentParser(
-        (TrainArgs, ModelConfig)
+        (TrainArgs, LMDecoderConfig)
     ).parse_args_into_dataclasses()
     train_args: TrainArgs
     train_args.batch_size = (
@@ -58,19 +58,19 @@ def parse_args() -> Tuple[TrainArgs, ModelConfig]:
     return train_args, model_config
 
 
-random.seed(42)
-torch.manual_seed(42)
+random.seed(1)
+torch.manual_seed(1)
 
 
-class MicroTraining(pl.LightningModule):
+class LMDecoderAlgorithm(pl.LightningModule):
 
     def __init__(
         self,
-        model: micro_lm_model.TransformerDecoder,
+        model: lm_decoder.LMDecoder,
         tokenizer: PreTrainedTokenizerFast,
         train_args: TrainArgs,
     ):
-        super(MicroTraining, self).__init__()
+        super(LMDecoderAlgorithm, self).__init__()
         self.model = model
         self.args = train_args
         self.tokenizer = tokenizer
@@ -102,7 +102,7 @@ class MicroTraining(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         if batch_idx == 0:
             test_prompt = "My name is David, and I am"
-            chat_warpper = ChatWrapper(
+            chat_warpper = LMSampler(
                 self.model, self.tokenizer, torch.bfloat16, self.device
             )
             print(chat_warpper.show_output_probs(test_prompt))
@@ -179,7 +179,7 @@ def main():
     )
     # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
     tokenizer = lm_tokenizer.load_tokenizer()
-    model = micro_lm_model.get_model_from_config(model_config)
+    model = lm_decoder.get_model_from_config(model_config)
     if train_args.model_path != "":
         model.load_state_dict(torch.load(train_args.model_path))
 
@@ -194,7 +194,7 @@ def main():
         batch_size=train_args.batch_size,
         path=train_args.dataset_path,
     )
-    model_wrapper = MicroTraining(model, tokenizer, train_args)
+    model_wrapper = LMDecoderAlgorithm(model, tokenizer, train_args)
     trainer.fit(
         model_wrapper,
         datamodule=data_module,
