@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformers import PreTrainedTokenizerFast
 
 import json
-import micro_lm_model
+from model import transformer
 import dataclasses
 
 
@@ -53,19 +53,19 @@ class RepetitionPenaltyLogitsProcessor:
 
 
 class LMSampler(nn.Module):
-
     def __init__(
         self,
-        model: micro_lm_model.LMDecoder,
+        model: transformer.TransformerDecoder,
         tokenizer: PreTrainedTokenizerFast,
-        dtype: torch.dtype,
-        device: torch.device,
     ):
         super().__init__()
         self.model = model
         self.tokenizer = tokenizer
-        self.dtype = dtype
-        self.device = device
+        for name, p in self.model.named_parameters():
+            if "k_proj" in name:
+                self.dtype = p.dtype
+                self.device = p.device
+                break
 
     def forward(self, input_ids, attention_mask, input_pos):
         return self.model(input_ids, attention_mask=attention_mask, input_pos=input_pos)
@@ -132,12 +132,15 @@ class LMSampler(nn.Module):
 
         self.model.eval()
         batch_size = input_ids.size(0)
-        self.model.setup_caches(batch_size, self.dtype, self.device)
+
+
+
+        kv_caches = self.model.get_kv_caches(batch_size, self.dtype, self.device)
         output = [[] for _ in range(input_ids.size(0))]
         input = input_ids.to(torch.long)
         ith_token = input_ids.size(1)
         for i in range(config.generation_max_length):
-            logits = self.model(input, input_pos=position_ids)
+            logits = self.model(input, input_pos=position_ids, kv_caches=kv_caches)
             next_token_logits = logits[:, -1, :]
             if config.temperature == 0.0:
                 next_token_ids = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
@@ -153,7 +156,6 @@ class LMSampler(nn.Module):
             ith_token += 1
             if torch.all(next_token_ids == self.tokenizer.eos_token_id):
                 break
-        self.model.remove_caches()
         self.model.train()
         return torch.tensor(output)
 

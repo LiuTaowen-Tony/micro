@@ -214,6 +214,9 @@ class LevelVQVAEConfig:
     nb_entries: int
     scaling_rates: list[int]
 
+    def build_model(self) -> "LevelVQVAE":
+        return LevelVQVAE(config=self, **self.__dict__)
+
 class LevelVQVAE(torch.nn.Module):
     def __init__(
         self,

@@ -16,8 +16,9 @@ class BaseAlgorithm(pl.LightningModule):
     def configure_optimizers(self):
         return escape_non_decay(
             self.model,
-            lambda x : torch.optim.Adam(x, 
-                self.train_args.learning_rate),
+            lambda x : torch.optim.AdamW(x, 
+                self.train_args.learning_rate,
+                fused=False),
             lambda x : LinearWarmupCosineAnnealingLR(
                 x,
                 warmup_steps=self.train_args.warmup_steps,

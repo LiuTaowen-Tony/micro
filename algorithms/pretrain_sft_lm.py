@@ -3,12 +3,12 @@ import random
 import pytorch_lightning as pl
 import dataclasses
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
+from algorithms.base_algorithm import BaseAlgorithm
 from ml_utils.args import DataClassArgumentParser
 from sampler.lm_sampler import LMSampler
 from pytorch_lightning.loggers import WandbLogger
 import torch
-from model import lm_decoder
-from model.lm_decoder import LMDecoderConfig
+from model import transformer
 import pretrain_sft_lm_data
 import ml_utils
 import os
@@ -45,9 +45,9 @@ class TrainArgs:
 
 
 # Argument parser
-def parse_args() -> Tuple[TrainArgs, LMDecoderConfig]:
+def parse_args() -> Tuple[TrainArgs, transformer.TransformerDecoderConfig]:
     train_args, model_config = DataClassArgumentParser(
-        (TrainArgs, LMDecoderConfig)
+        (TrainArgs, transformer.TransformerDecoderConfig)
     ).parse_args_into_dataclasses()
     train_args: TrainArgs
     train_args.batch_size = (
@@ -62,11 +62,11 @@ random.seed(1)
 torch.manual_seed(1)
 
 
-class LMDecoderAlgorithm(pl.LightningModule):
+class LMDecoderAlgorithm(BaseAlgorithm):
 
     def __init__(
         self,
-        model: lm_decoder.LMDecoder,
+        model: transformer.TransformerDecoder,
         tokenizer: PreTrainedTokenizerFast,
         train_args: TrainArgs,
     ):
@@ -110,54 +110,54 @@ class LMDecoderAlgorithm(pl.LightningModule):
             print(generated_text)
         return loss
 
-    def on_before_optimizer_step(self, optimizer):
-        # Compute the 2-norm for each layer
-        # If using mixed precision, the gradients are already unscaled here
-        norms = grad_norm(self.model, norm_type=2)
-        self.log_dict(norms)
+    # def on_before_optimizer_step(self, optimizer):
+    #     # Compute the 2-norm for each layer
+    #     # If using mixed precision, the gradients are already unscaled here
+    #     norms = grad_norm(self.model, norm_type=2)
+    #     self.log_dict(norms)
 
-    def configure_optimizers(self):
-        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": self.args.weight_decay},
-            {"params": nodecay_params, "weight_decay": 0.0},
-        ]
-        num_decay_params = sum(p.numel() for p in decay_params)
-        num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        if self.local_rank == 0:
-            print(
-                f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
-            )
-            print(
-                f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
-            )
-        optimizer = torch.optim.AdamW(
-            optim_groups,
-            lr=self.args.learning_rate,
-            betas=(self.args.beta1, self.args.beta2),
-            fused=False,
-        )
-        max_steps = self.args.max_steps
-        if self.args.max_steps == -1:
-            max_steps = (
-                self.trainer.max_epochs * self.trainer.estimated_stepping_batches
-            )
-        print(f"max_steps: {max_steps}")
-        scheduler = ml_utils.optim.LinearWarmupCosineAnnealingLR(
-            optimizer,
-            warmup_steps=self.args.warmup_steps,
-            max_steps=max_steps,
-            eta_min=self.args.learning_rate * self.args.min_learning_rate_ratio,
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "step",
-            },
-        }
+    # def configure_optimizers(self):
+    #     param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
+    #     decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    #     nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    #     optim_groups = [
+    #         {"params": decay_params, "weight_decay": self.args.weight_decay},
+    #         {"params": nodecay_params, "weight_decay": 0.0},
+    #     ]
+    #     num_decay_params = sum(p.numel() for p in decay_params)
+    #     num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    #     if self.local_rank == 0:
+    #         print(
+    #             f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
+    #         )
+    #         print(
+    #             f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
+    #         )
+    #     optimizer = torch.optim.AdamW(
+    #         optim_groups,
+    #         lr=self.args.learning_rate,
+    #         betas=(self.args.beta1, self.args.beta2),
+    #         fused=False,
+    #     )
+    #     max_steps = self.args.max_steps
+    #     if self.args.max_steps == -1:
+    #         max_steps = (
+    #             self.trainer.max_epochs * self.trainer.estimated_stepping_batches
+    #         )
+    #     print(f"max_steps: {max_steps}")
+    #     scheduler = ml_utils.optim.LinearWarmupCosineAnnealingLR(
+    #         optimizer,
+    #         warmup_steps=self.args.warmup_steps,
+    #         max_steps=max_steps,
+    #         eta_min=self.args.learning_rate * self.args.min_learning_rate_ratio,
+    #     )
+    #     return {
+    #         "optimizer": optimizer,
+    #         "lr_scheduler": {
+    #             "scheduler": scheduler,
+    #             "interval": "step",
+    #         },
+    #     }
 
 
 # Main training function
@@ -179,7 +179,8 @@ def main():
     )
     # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
     tokenizer = lm_tokenizer.load_tokenizer()
-    model = lm_decoder.get_model_from_config(model_config)
+    # model = transformer.get_model_from_config(model_config)
+    model = model_config.build_model()
     if train_args.model_path != "":
         model.load_state_dict(torch.load(train_args.model_path))
 

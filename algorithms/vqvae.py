@@ -13,10 +13,7 @@ import ml_utils.dist
 from model.level_vqvae import LevelVQVAE, get_model_by_taskname
 from ml_utils.args import DataClassArgumentParser
 from ml_utils.misc import save_with_config
-from lightning.pytorch.utilities import grad_norm
 from torchvision.utils import save_image
-from vqvae_tokenizer.hps import HPS_VQVAE
-from vqvae_tokenizer.level_vqvae_model import VQVAE
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -153,7 +150,6 @@ def parse_args() -> Tuple[TrainerArgs, VQVAETrainerArgs]:
 def main():
     trainer_args, train_args = parse_args()
     wandb_logger = WandbLogger(project=train_args.project_name)
-    wandb_logger.log_hyperparams(train_args.__dict__)
 
     trainer = pl.Trainer(
         logger=wandb_logger,
@@ -174,7 +170,7 @@ def main():
     # print(cfg)
     wrapper = VQVAETrainer(model, train_args, wandb_logger)
     trainer.fit(wrapper)
-    save_with_config(model, f"trained_models/vqvae_{train_args.dataset_name}")
+    save_with_config(model, f"trained_models/vqvae_{train_args.dataset_name}_{wandb_logger.experiment.name}")
 
 if __name__ == "__main__":
     main()
