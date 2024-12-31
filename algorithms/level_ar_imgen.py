@@ -7,10 +7,13 @@ import pytorch_lightning as pl
 import torchvision
 from ml_utils.args import DataClassArgumentParser
 from ml_utils.data import load_jsonl
-from ml_utils.misc import load_with_config
+from ml_utils.misc import load_with_config, save_with_config
+from model.encoder_decoder_transformer import TransformerConfig
 from model.level_vqvae import LevelVQVAE, LevelVQVAEConfig
-from model.transformer import TransformerDecoder, TransformerDecoderConfig
+from model.transformer import DecoderOnlyTransformer, TransformerDecoderConfig
 from .base_algorithm import BaseAlgorithm
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.strategies import DDPStrategy
 from tqdm import tqdm
 import json
 
@@ -21,30 +24,33 @@ class TrainerArgs:
     max_epochs: int = 30
     # max_steps: int = -1
     accumulate_grad_batches: int = 1
+    log_every_n_steps: int = 1
     precision: str = "bf16-mixed"
 
-    
+
 @dataclasses.dataclass()
 class LevelImGenTainerArgs:
-    total_batch_size: int = 128
-    learning_rate: float = 1e-4
-    # weight_decay: float = 0.0
-    # warmup_steps: int = 1200
-    beta: float = 0.25
+    total_batch_size: int = 24 * 3
+    learning_rate: float = 5e-4
+    weight_decay: float = 0.0
+    warmup_steps: int = 1200
     batch_size: int = -1
-    # min_learning_rate_ratio: float = 0.5
-    level: int = 0
-    project_name: str = "vqvae-ffhq128"
+    min_learning_rate_ratio: float = 0.1
+    level: int = 1
+    project_name: str = "arimgen-ffhq128-level1"
     dataset_name: str = "ffhq128"
     dataset_cache_dir: str = "data/vqvae_latent_codes"
-    vqvae_path: str = "trained_models/vqvae_ffhq128_young-lion-46"
+    vqvae_path: str = "trained_models/vqvae_ffhq128_noble-frost-48"
 
 class LevelImGenTrainer(BaseAlgorithm):
-    def __init__(self, 
-                 vqvae: LevelVQVAE, 
-                 model: TransformerDecoder, 
-                 train_args: LevelImGenTainerArgs, 
-                 wandb):
+
+    def __init__(
+        self,
+        vqvae: LevelVQVAE,
+        model: DecoderOnlyTransformer,
+        train_args: LevelImGenTainerArgs,
+        wandb,
+    ):
         super().__init__(model, train_args, wandb)
         self.loss = torch.nn.CrossEntropyLoss()
         self.vqvae = vqvae
@@ -55,23 +61,6 @@ class LevelImGenTrainer(BaseAlgorithm):
 
     def _loss(self, img, condition):
         return self.model(img, condition)
-
-    @torch.no_grad()
-    def _encode(self, x):
-        """Encodes input data into latent codes for all levels."""
-        _, _, _, _, codes = self.vqvae(x)
-        return codes
-
-    def _calculate_loss(self, x, condition):
-        """Compute loss and accuracy."""
-        x = x.to(self.device)
-        condition = [c.to(self.device) for c in condition]
-        self._dequantize_condition(condition)
-
-        y, _ = self.prior(x, cs=condition)
-        loss = F.cross_entropy(y, x, reduction='none').mean()
-        accuracy = (torch.argmax(y, dim=1) == x).float().mean()
-        return loss, accuracy
 
     def prepare_data(self):
         dataset_path = os.path.join(self.train_args.dataset_cache_dir, self.train_args.dataset_name)
@@ -131,11 +120,11 @@ class LevelImGenTrainer(BaseAlgorithm):
                 for item in preprocess(image, label):
                     f.write(json.dumps(item) + "\n")
 
-    @torch.no_grad()
-    def _dequantize_condition(self, condition):
-        """Dequantize higher-level latent codes for conditioning."""
-        for i, c in enumerate(condition):
-            condition[i] = self.vqvae.codebooks[self.level + i + 1].embed_code(c).permute(0, 3, 1, 2)
+    # @torch.no_grad()
+    # def _dequantize_condition(self, condition):
+    #     """Dequantize higher-level latent codes for conditioning."""
+    #     for i, c in enumerate(condition):
+    #         condition[i] = self.vqvae.codebooks[self.level + i + 1].embed_code(c).permute(0, 3, 1, 2)
 
     def setup(self, stage):
         if self.train_args.dataset_name == "cifar10":
@@ -146,7 +135,6 @@ class LevelImGenTrainer(BaseAlgorithm):
             train_idxs, val_idxs = torch.arange(60000), torch.arange(60000, 70000)
 
         level = self.train_args.level
-        vqvae = self.vqvae
         class LevelImGenDataset(torch.utils.data.Dataset):
             def __init__(self, data):
                 self.data = data
@@ -156,58 +144,65 @@ class LevelImGenTrainer(BaseAlgorithm):
                 item = self.data[idx]
                 gt = item["level_" + str(level)]
                 if level == 0:
-                    condition = item["label"]
-
+                    condition = [item["label"]]
                 else:
                     condition = item["level_" + str(level - 1)]
-                    condition = vqvae.codebooks[level - 1].embed_code(torch.tensor(condition))
-                gt = vqvae.codebooks[level].embed_code(torch.tensor(gt))
-
+                input_ids = torch.tensor(gt, dtype=torch.long)
+                labels = torch.Tensor(gt[1:] + [-100]).long()
                 return {
-                    "input_ids": torch.tensor(gt, dtype=torch.long),
-                    "labels": torch.tensor(condition, dtype=torch.long),
+                    "condition": torch.tensor(condition, dtype=torch.long),
+                    "input_ids": input_ids,
+                    "labels": labels,
                 }
         dataset = LevelImGenDataset(raw_data)
         self.train_dataset = torch.utils.data.Subset(dataset, train_idxs)
         self.val_dataset = torch.utils.data.Subset(dataset, val_idxs)
 
+    def _loss(self, batch):
+        logits = self.model(src=batch["condition"], tgt=batch["input_ids"])
+        loss = self.loss(logits.view(-1, logits.size(-1)), batch["labels"].view(-1))
+        return loss
+
     def training_step(self, batch, batch_idx):
-        input_ids, labels, attention_mask = batch
-        logits = self.model(tokens=input_ids)
-        loss = self.loss(logits.view(-1, logits.size(-1)), labels.view(-1))
+        loss = self._loss(batch)
         self.log_dict({
             "train_loss": loss,
             "lr": self.trainer.optimizers[0].param_groups[0]["lr"]
-        })
+        }, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        input_ids, labels, attention_mask = batch
-        logits = self.model(tokens=input_ids)
-        loss = self.loss(logits.view(-1, logits.size(-1)), labels.view(-1))
+        loss = self._loss(batch)
         self.log_dict({
             "val_loss": loss
-        })
+        }, prog_bar=True, sync_dist=True)
+        save_with_config(self.model, "trained_models/level_ar_imgen")
         return loss
 
-def parse_args() -> tuple[LevelImGenTainerArgs, TrainerArgs]:
-    train_args, trainer_args = DataClassArgumentParser(
-        (LevelImGenTainerArgs, TrainerArgs)
+def parse_args() -> tuple[LevelImGenTainerArgs, TrainerArgs, TransformerConfig]:
+    train_args, trainer_args, model_config = DataClassArgumentParser(
+        (LevelImGenTainerArgs, TrainerArgs, TransformerConfig)
     ).parse_args_into_dataclasses()
     train_args.batch_size = (
         train_args.total_batch_size
         // trainer_args.accumulate_grad_batches
         // torch.cuda.device_count()
     )
-    return  train_args, trainer_args
-
+    return  train_args, trainer_args, model_config
 
 
 if __name__ == "__main__":
-    train_args, trainer_args = parse_args()
+    train_args, trainer_args, model_config = parse_args()
     vqvae = load_with_config(LevelVQVAEConfig, train_args.vqvae_path)
-    model = None
-
-    algorithm = LevelImGenTrainer(vqvae, model, train_args, None)
-    algorithm.prepare_data()
-    
+    model = model_config.build_model()
+    logger = WandbLogger(project=train_args.project_name)
+    logger.log_hyperparams(train_args.__dict__ | trainer_args.__dict__ | model_config.__dict__)
+    algorithm = LevelImGenTrainer(vqvae, model, train_args, logger)
+    trainer = pl.Trainer(
+        strategy=DDPStrategy(find_unused_parameters=True),
+        logger=logger,
+        **trainer_args.__dict__
+    )
+    trainer.fit(algorithm)
+    # algorithm.setup("fit")
+    # x = algorithm.train_dataset[0]

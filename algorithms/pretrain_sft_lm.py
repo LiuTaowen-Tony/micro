@@ -66,7 +66,7 @@ class LMDecoderAlgorithm(BaseAlgorithm):
 
     def __init__(
         self,
-        model: transformer.TransformerDecoder,
+        model: transformer.DecoderOnlyTransformer,
         tokenizer: PreTrainedTokenizerFast,
         train_args: TrainArgs,
     ):

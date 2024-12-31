@@ -11,7 +11,6 @@ class BaseAlgorithm(pl.LightningModule):
         self.model = model
         self.train_args = train_args
         self.wandb = wandb
-        self.save_hyperparameters()
 
     def configure_optimizers(self):
         return escape_non_decay(

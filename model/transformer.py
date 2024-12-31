@@ -307,7 +307,7 @@ class KVCache(nn.Module):
         return k_out, v_out
 
 
-class TransformerDecoderLayer(nn.Module):
+class TransformerDecoderOnlyLayer(nn.Module):
     def __init__(
         self,
         attn: SelfAttention,
@@ -364,7 +364,7 @@ class TransformerDecoderConfig:
     pos_emb_base: int = 10000
     pos_emb_max_seq_len: int = 4096
 
-    def build_model(self) -> "TransformerDecoder":
+    def build_model(self) -> "DecoderOnlyTransformer":
         num_heads = self.num_heads
         head_dim = self.head_dim
         num_kv_heads = self.num_kv_heads
@@ -389,13 +389,13 @@ class TransformerDecoderConfig:
             max_seq_len=max_seq_len,
             attn_dropout=attn_dropout,
         )
-        layer = TransformerDecoderLayer(
+        layer = TransformerDecoderOnlyLayer(
             attn=attn,
             mlp=MLP(hidden_size),
             sa_norm=nn.RMSNorm(hidden_size),
             mlp_norm=nn.RMSNorm(hidden_size),
         )
-        decoder = TransformerDecoder(
+        decoder = DecoderOnlyTransformer(
             tok_embeddings=torch.nn.Embedding(vocab_size, hidden_size),
             layer=layer,
             num_layers=num_layers,
@@ -409,11 +409,11 @@ class TransformerDecoderConfig:
         return decoder
 
 
-class TransformerDecoder(nn.Module):
+class DecoderOnlyTransformer(nn.Module):
     def __init__(
         self,
         tok_embeddings: nn.Embedding,
-        layer: TransformerDecoderLayer,
+        layer: TransformerDecoderOnlyLayer,
         num_layers: int,
         max_seq_len: int,
         num_heads: int,
@@ -513,6 +513,8 @@ class TransformerDecoder(nn.Module):
             # shape: [1, input_pos_len, m_s]
             # in most cases input_pos_len should be 1
             mask = self.causal_mask[None, input_pos]
+        else:
+            kv_caches = [None] * len(self.layers)
 
         for layer, kv_cache in zip(self.layers, kv_caches):
             # shape: [b, s, d]
