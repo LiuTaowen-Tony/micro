@@ -8,10 +8,11 @@ def text_token_numbers(tokenizer: PreTrainedTokenizerFast, text):
     return tokenizer.encode(text, return_tensors="pt").numel()
 
 
-def boolean_triangular_mask(flat_mask: torch.Tensor) -> torch.Tensor:
+def boolean_triangular_mask(flat_mask: torch.Tensor) -> torch.BoolTensor:
     assert flat_mask.dim() < 3, "Input tensor should be 1D or 2D"
     if flat_mask.dim() == 1:
         flat_mask = flat_mask.unsqueeze(0)
+    flat_mask = flat_mask.bool()
 
     batch_size, seq_len = flat_mask.size()
 

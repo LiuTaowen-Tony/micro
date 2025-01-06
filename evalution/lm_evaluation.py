@@ -1,6 +1,6 @@
 import os
 
-import lm_tokenizer
+import sampler.lm_tokenizer as lm_tokenizer
 os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 import time
 import torch

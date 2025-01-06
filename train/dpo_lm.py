@@ -5,7 +5,7 @@ from torch import nn
 import pytorch_lightning as pl
 from dataclasses import dataclass
 import sampler.lm_sampler as lm_sampler
-import lm_tokenizer
+import sampler.lm_tokenizer as lm_tokenizer
 from model import micro_lm_model
 from ml_utils.args import DataClassArgumentParser
 import ml_utils.data

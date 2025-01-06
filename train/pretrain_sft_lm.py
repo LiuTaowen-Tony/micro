@@ -3,17 +3,15 @@ import random
 import pytorch_lightning as pl
 import dataclasses
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
-from algorithms.base_algorithm import BaseAlgorithm
+from train.base_algorithm import BaseAlgorithm
 from ml_utils.args import DataClassArgumentParser
-from sampler.lm_sampler import LMSampler
+from inference.lm_sampler import LMSampler
 from pytorch_lightning.loggers import WandbLogger
 import torch
 from model import transformer
 import pretrain_sft_lm_data
-import ml_utils
 import os
 from lightning.pytorch.utilities import grad_norm
-import lm_tokenizer
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -45,9 +43,9 @@ class TrainArgs:
 
 
 # Argument parser
-def parse_args() -> Tuple[TrainArgs, transformer.TransformerDecoderConfig]:
+def parse_args() -> Tuple[TrainArgs, transformer.DecoderOnlyTransformerConfig]:
     train_args, model_config = DataClassArgumentParser(
-        (TrainArgs, transformer.TransformerDecoderConfig)
+        (TrainArgs, transformer.DecoderOnlyTransformerConfig)
     ).parse_args_into_dataclasses()
     train_args: TrainArgs
     train_args.batch_size = (
@@ -177,10 +175,8 @@ def main():
         log_every_n_steps=1,
         gradient_clip_val=train_args.gradient_clip_val,
     )
-    # tokenizer = PreTrainedTokenizerFast.from_pretrained("")
-    tokenizer = lm_tokenizer.load_tokenizer()
-    # model = transformer.get_model_from_config(model_config)
     model = model_config.build_model()
+    tokenizer = model.tokenizer
     if train_args.model_path != "":
         model.load_state_dict(torch.load(train_args.model_path))
 

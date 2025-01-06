@@ -52,6 +52,10 @@ val_sft/
 dpo-training/
 dpo_model/
 images/
-vqvae_tokenizer/
 vqvae-ffhq128/
+data/
+vqvae-cifar10/
+arimgen-ffhq128-level0/
+arimgen-ffhq128-level1/
+clip/
 data/

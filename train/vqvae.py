@@ -8,7 +8,7 @@ from pytorch_lightning.loggers import WandbLogger
 import torchvision
 import wandb
 
-from algorithms.base_algorithm import BaseAlgorithm
+from train.base_algorithm import BaseAlgorithm
 import ml_utils.dist
 from model.level_vqvae import LevelVQVAE, get_model_by_taskname
 from ml_utils.args import DataClassArgumentParser
@@ -50,7 +50,10 @@ class VQVAETrainer(BaseAlgorithm):
         train_args: VQVAETrainerArgs,
         wandb: WandbLogger
     ) -> None:
-        super().__init__(model, train_args, wandb)
+        super().__init__()
+        self.model = model
+        self.train_args = train_args
+        self.wandb = wandb
 
     def forward(self, x):
         return self.model(x)

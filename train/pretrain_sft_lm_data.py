@@ -186,7 +186,7 @@ class FillSeqDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    import lm_tokenizer
+    import sampler.lm_tokenizer as lm_tokenizer
     tokenizer = lm_tokenizer.load_tokenizer()
     # data_module = FillSeqDataModule(tokenizer, 8, 512, "DKYoon/SlimPajama-6B")
     # data_module.setup()

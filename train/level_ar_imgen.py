@@ -10,7 +10,7 @@ from ml_utils.data import load_jsonl
 from ml_utils.misc import load_with_config, save_with_config
 from model.encoder_decoder_transformer import TransformerConfig
 from model.level_vqvae import LevelVQVAE, LevelVQVAEConfig
-from model.transformer import DecoderOnlyTransformer, TransformerDecoderConfig
+from model.transformer import DecoderOnlyTransformer, DecoderOnlyTransformerConfig
 from .base_algorithm import BaseAlgorithm
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
@@ -31,13 +31,14 @@ class TrainerArgs:
 @dataclasses.dataclass()
 class LevelImGenTainerArgs:
     total_batch_size: int = 24 * 3
-    learning_rate: float = 5e-4
+    learning_rate: float = 3e-4
     weight_decay: float = 0.0
     warmup_steps: int = 1200
     batch_size: int = -1
     min_learning_rate_ratio: float = 0.1
-    level: int = 1
-    project_name: str = "arimgen-ffhq128-level1"
+    level: int = 0
+    project_name: str = "arimgen-ffhq128-level0"
+    conditional: bool = True
     dataset_name: str = "ffhq128"
     dataset_cache_dir: str = "data/vqvae_latent_codes"
     vqvae_path: str = "trained_models/vqvae_ffhq128_noble-frost-48"
@@ -51,16 +52,15 @@ class LevelImGenTrainer(BaseAlgorithm):
         train_args: LevelImGenTainerArgs,
         wandb,
     ):
-        super().__init__(model, train_args, wandb)
+        super().__init__()
         self.loss = torch.nn.CrossEntropyLoss()
         self.vqvae = vqvae
         self.train_args = train_args
+        self.wandb = wandb
+        self.model = model
 
-    def forward(self, x):
-        return self.model(x)
-
-    def _loss(self, img, condition):
-        return self.model(img, condition)
+    # def forward(self, x):
+    #     return self.model(x)
 
     def prepare_data(self):
         dataset_path = os.path.join(self.train_args.dataset_cache_dir, self.train_args.dataset_name)
@@ -158,13 +158,16 @@ class LevelImGenTrainer(BaseAlgorithm):
         self.train_dataset = torch.utils.data.Subset(dataset, train_idxs)
         self.val_dataset = torch.utils.data.Subset(dataset, val_idxs)
 
-    def _loss(self, batch):
-        logits = self.model(src=batch["condition"], tgt=batch["input_ids"])
+    def forward(self, batch):
+        if self.train_args.conditional:
+            logits = self.model(src=batch["condition"], tgt=batch["input_ids"])
+        else:
+            logits = self.model(tgt=batch["input_ids"], src=None)
         loss = self.loss(logits.view(-1, logits.size(-1)), batch["labels"].view(-1))
         return loss
 
     def training_step(self, batch, batch_idx):
-        loss = self._loss(batch)
+        loss = self.forward(batch)
         self.log_dict({
             "train_loss": loss,
             "lr": self.trainer.optimizers[0].param_groups[0]["lr"]
@@ -172,7 +175,7 @@ class LevelImGenTrainer(BaseAlgorithm):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss = self._loss(batch)
+        loss = self.forward(batch)
         self.log_dict({
             "val_loss": loss
         }, prog_bar=True, sync_dist=True)

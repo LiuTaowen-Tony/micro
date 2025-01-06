@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import math
 from .transformer import MLP as FeedForward
 from dataclasses import dataclass
@@ -149,10 +148,11 @@ class DecoderLayer(nn.Module):
             xnorm, xnorm, xnorm, is_causal=is_causal, mask=tgt_mask, kv_cache=kv_cache
         )
         h = x + self_attn_output
-        cross_attn_output, _ = self.cross_attn(
-            self.norm2(h), enc_output, enc_output, is_causal=False
-        )
-        h = h + cross_attn_output
+        if enc_output is not None:
+            cross_attn_output, _ = self.cross_attn(
+                self.norm2(h), enc_output, enc_output, is_causal=False
+            )
+            h = h + cross_attn_output
         ff_output = self.ff(self.norm3(h))
         return h + ff_output, kv_cache
 
@@ -208,7 +208,9 @@ class Transformer(nn.Module):
         return tgt, kv_cache
 
     def forward(self, src, tgt):
-        memory = self.encode(src)
+        memory = None
+        if src is not None:
+            memory = self.encode(src)
         output, _ = self.decode(tgt, memory)
         return self.fc_out(output)
 

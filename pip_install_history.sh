@@ -13,3 +13,4 @@ command pip3 install einops # Tue 10 Dec 02:00:27 GMT 2024
 command pip3 install img2dataset # Tue 10 Dec 02:33:12 GMT 2024
 command pip3 install kagglehub # Sat 28 Dec 05:44:20 GMT 2024
 command pip3 install torch-summary # Sat 28 Dec 16:04:33 GMT 2024
+command pip3 install timm # Sat  4 Jan 03:40:08 GMT 2025

@@ -6,6 +6,71 @@ from torch import FloatTensor, LongTensor, Tensor, BoolTensor
 from typing import Optional, Union
 import __future__
 
+from model.text_tokenizer import TextTokenizerConfig
+
+
+@dataclasses.dataclass
+class DecoderOnlyTransformerConfig:
+    num_heads: int = 16
+    head_dim: int = 64
+    num_kv_heads: int = 8
+    max_seq_len: int = 1024
+    attn_dropout: float = 0.1
+    vocab_size: int = 32000
+    num_layers: int = 10
+    attn_bias: bool = False
+    ffn_bias: bool = True
+    pos_emb_base: int = 10000
+    pos_emb_max_seq_len: int = 4096
+    tokenizer_config: TextTokenizerConfig = dataclasses.field(
+        default_factory=TextTokenizerConfig
+    )
+
+    def build_model(self) -> "DecoderOnlyTransformer":
+        num_heads = self.num_heads
+        head_dim = self.head_dim
+        num_kv_heads = self.num_kv_heads
+        max_seq_len = self.max_seq_len
+        attn_dropout = self.attn_dropout
+        vocab_size = self.vocab_size
+        num_layers = self.num_layers
+
+        hidden_dim = num_heads * head_dim
+        attn = SelfAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            q_proj=nn.Linear(hidden_dim, num_heads * head_dim, bias=self.attn_bias),
+            k_proj=nn.Linear(hidden_dim, num_kv_heads * head_dim, bias=self.attn_bias),
+            v_proj=nn.Linear(hidden_dim, num_kv_heads * head_dim, bias=self.attn_bias),
+            output_proj=nn.Linear(hidden_dim, hidden_dim, bias=self.attn_bias),
+            pos_embeddings=RotaryPositionalEmbeddings(
+                head_dim, self.pos_emb_max_seq_len, self.pos_emb_base
+            ),
+            max_seq_len=max_seq_len,
+            attn_dropout=attn_dropout,
+        )
+        layer = TransformerDecoderOnlyLayer(
+            attn=attn,
+            mlp=MLP(hidden_dim),
+            sa_norm=nn.RMSNorm(hidden_dim),
+            mlp_norm=nn.RMSNorm(hidden_dim),
+        )
+        decoder = DecoderOnlyTransformer(
+            tok_embeddings=torch.nn.Embedding(vocab_size, hidden_dim),
+            layer=layer,
+            num_layers=num_layers,
+            max_seq_len=max_seq_len,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            norm=nn.RMSNorm(hidden_dim),
+            config=self,
+            lm_head=nn.Linear(hidden_dim, vocab_size),
+        )
+        return decoder
+
+
 
 class MLP(nn.Module):
     def __init__(self, hidden_size):
@@ -350,66 +415,8 @@ def _get_clones(module: nn.Module, n: int) -> nn.ModuleList:
     return nn.ModuleList([copy.deepcopy(module) for i in range(n)])
 
 
-@dataclasses.dataclass
-class TransformerDecoderConfig:
-    num_heads: int = 16
-    head_dim: int = 64
-    num_kv_heads: int = 8
-    max_seq_len: int = 1024
-    attn_dropout: float = 0.1
-    vocab_size: int = 32000
-    num_layers: int = 10
-    attn_bias: bool = False
-    ffn_bias: bool = True
-    pos_emb_base: int = 10000
-    pos_emb_max_seq_len: int = 4096
-
-    def build_model(self) -> "DecoderOnlyTransformer":
-        num_heads = self.num_heads
-        head_dim = self.head_dim
-        num_kv_heads = self.num_kv_heads
-        max_seq_len = self.max_seq_len
-        attn_dropout = self.attn_dropout
-        vocab_size = self.vocab_size
-        num_layers = self.num_layers
-
-        hidden_size = num_heads * head_dim
-        attn = SelfAttention(
-            embed_dim=hidden_size,
-            num_heads=num_heads,
-            num_kv_heads=num_kv_heads,
-            head_dim=head_dim,
-            q_proj=nn.Linear(hidden_size, num_heads * head_dim, bias=self.attn_bias),
-            k_proj=nn.Linear(hidden_size, num_kv_heads * head_dim, bias=self.attn_bias),
-            v_proj=nn.Linear(hidden_size, num_kv_heads * head_dim, bias=self.attn_bias),
-            output_proj=nn.Linear(hidden_size, hidden_size, bias=self.attn_bias),
-            pos_embeddings=RotaryPositionalEmbeddings(
-                head_dim, self.pos_emb_max_seq_len, self.pos_emb_base
-            ),
-            max_seq_len=max_seq_len,
-            attn_dropout=attn_dropout,
-        )
-        layer = TransformerDecoderOnlyLayer(
-            attn=attn,
-            mlp=MLP(hidden_size),
-            sa_norm=nn.RMSNorm(hidden_size),
-            mlp_norm=nn.RMSNorm(hidden_size),
-        )
-        decoder = DecoderOnlyTransformer(
-            tok_embeddings=torch.nn.Embedding(vocab_size, hidden_size),
-            layer=layer,
-            num_layers=num_layers,
-            max_seq_len=max_seq_len,
-            num_heads=num_heads,
-            head_dim=head_dim,
-            norm=nn.RMSNorm(hidden_size),
-            config=self,
-            lm_head=nn.Linear(hidden_size, vocab_size),
-        )
-        return decoder
-
-
 class DecoderOnlyTransformer(nn.Module):
+
     def __init__(
         self,
         tok_embeddings: nn.Embedding,
@@ -420,7 +427,7 @@ class DecoderOnlyTransformer(nn.Module):
         head_dim: int,
         norm: nn.Module,
         lm_head: nn.Module,
-        config: TransformerDecoderConfig,
+        config: DecoderOnlyTransformerConfig,
     ) -> None:
         super().__init__()
 
@@ -434,6 +441,7 @@ class DecoderOnlyTransformer(nn.Module):
         self.register_buffer("causal_mask", causal_mask, persistent=False)
         self.lm_head = lm_head
         self.config = config
+        self.tokenizer = config.tokenizer_config.build_model()
 
     def get_kv_caches(
         self,
@@ -460,6 +468,40 @@ class DecoderOnlyTransformer(nn.Module):
                 )
             )
         return kv_caches
+
+    def feature_transform(
+        self,
+        x: FloatTensor,
+        *,
+        mask: Optional[BoolTensor] = None,
+        input_pos: Optional[LongTensor] = None,
+        kv_caches: Optional[list[KVCache]] = None,
+    ) -> Tensor:
+        # situation 1: no mask no input_pos no kv_caches
+        # situation 2: has mask no input_pos no kv_caches
+        # situation 3: no mask has input_pos has kv_caches
+        # kv caches must be provided
+        if kv_caches is not None:
+            if input_pos is None:
+                raise ValueError(
+                    "Caches are setup, but the position of input token is missing"
+                )
+            if mask is not None:
+                raise ValueError(
+                    "Mask is automatically set. Do not supply it again. Cannot use a non-causal mask for inference"
+                )
+            # shape: [1, input_pos_len, m_s]
+            # in most cases input_pos_len should be 1
+            mask = self.causal_mask[None, input_pos]
+        else:
+            kv_caches = [None] * len(self.layers)
+
+        for layer, kv_cache in zip(self.layers, kv_caches):
+            # shape: [b, s, d]
+            x = layer(x, mask=mask, input_pos=input_pos, kv_cache=kv_cache)
+
+        # shape: [b, s, d]
+        return self.norm(x)
 
     def forward(
         self,
@@ -500,28 +542,6 @@ class DecoderOnlyTransformer(nn.Module):
         h = tokens
         if tokens.dtype == torch.long:
             h = self.tok_embeddings(tokens)
-
-        if kv_caches is not None:
-            if input_pos is None:
-                raise ValueError(
-                    "Caches are setup, but the position of input token is missing"
-                )
-            if mask is not None:
-                raise ValueError(
-                    "Mask is automatically set. Do not supply it again. Cannot use a non-causal mask for inference"
-                )
-            # shape: [1, input_pos_len, m_s]
-            # in most cases input_pos_len should be 1
-            mask = self.causal_mask[None, input_pos]
-        else:
-            kv_caches = [None] * len(self.layers)
-
-        for layer, kv_cache in zip(self.layers, kv_caches):
-            # shape: [b, s, d]
-            h = layer(h, mask=mask, input_pos=input_pos, kv_cache=kv_cache)
-
-        # shape: [b, s, d]
-        h = self.norm(h)
-
+        h = self.feature_transform(h, mask=mask, input_pos=input_pos, kv_caches=kv_caches)
         output = self.lm_head(h)
         return output
