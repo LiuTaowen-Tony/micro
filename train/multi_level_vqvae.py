@@ -3,17 +3,19 @@ import os
 import dataclasses
 from typing import Tuple
 import torch
-import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
 import torchvision
+from torchvision.utils import save_image
 import wandb
 
-from train.base_algorithm import BaseAlgorithm
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import WandbLogger
+
 import ml_utils.dist
-from model.multi_level_vqvae import LevelVQVAE, get_model_by_taskname
 from ml_utils.args import DataClassArgumentParser
 from ml_utils.misc import save_with_config
-from torchvision.utils import save_image
+
+from model.multi_level_vqvae import MultiLevelVQVAE, get_model_by_taskname
+from train.base_algorithm import BaseAlgorithm
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -29,7 +31,7 @@ class TrainerArgs:
     accumulate_grad_batches: int = 1
     precision: str = "bf16-mixed"
 
-    
+
 @dataclasses.dataclass()
 class VQVAETrainerArgs:
     total_batch_size: int = 128
@@ -44,11 +46,9 @@ class VQVAETrainerArgs:
 
 
 class VQVAETrainer(BaseAlgorithm):
+
     def __init__(
-        self,
-        model: LevelVQVAE,
-        train_args: VQVAETrainerArgs,
-        wandb: WandbLogger
+        self, model: MultiLevelVQVAE, train_args: VQVAETrainerArgs, wandb: WandbLogger
     ) -> None:
         super().__init__()
         self.model = model
@@ -57,7 +57,7 @@ class VQVAETrainer(BaseAlgorithm):
 
     def forward(self, x):
         return self.model(x)
-    
+
     def training_step(self, batch, batch_idx):
         img, _ = batch
         y, d, _, _, _ = self.model(img)

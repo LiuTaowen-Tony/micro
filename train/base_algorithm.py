@@ -1,8 +1,10 @@
+import os
 import pytorch_lightning as pl
 import torch
 
 from ml_utils.optim import LinearWarmupCosineAnnealingLR, get_decay_non_decay
 from ml_utils.dist import rank0_print
+
 from lightning.pytorch.utilities import grad_norm
 
 class BaseAlgorithm(pl.LightningModule):
@@ -10,6 +12,8 @@ class BaseAlgorithm(pl.LightningModule):
         super().__init__()
         self.train_args = None
         self.wandb = None
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        torch.set_float32_matmul_precision('medium')
 
     def get_standard_optmizer(self, 
                               model,

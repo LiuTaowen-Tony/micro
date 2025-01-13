@@ -7,6 +7,30 @@ import torch.nn.functional as F
 from math import log2
 from typing import Optional, Tuple
 
+from ml_utils.misc import load_with_config
+
+
+@dataclass
+class MultiLevelVQVAEConfig:
+    in_channels: int
+    hidden_channels: int
+    res_channels: int
+    num_res_layers: int
+    num_levels: int
+    embed_dim: int
+    num_entries: int
+    scaling_rates: list[int]
+
+    def build_model(self) -> "MultiLevelVQVAE":
+        return MultiLevelVQVAE(config=self, **self.__dict__)
+
+
+@dataclass
+class TrainedMLVQVAEConfig:
+    path: str = "trained_models/multi_level_vqvae/cifar10_earnest-energy-4"
+
+    def build_model(self) -> "MultiLevelVQVAE":
+        return load_with_config(MultiLevelVQVAEConfig, self.path)
 
 class ReZero(torch.nn.Module):
     def __init__(self, in_channels: int, res_channels: int):
@@ -226,38 +250,25 @@ class Upscaler(torch.nn.Module):
 """
 
 
-@dataclass
-class LevelVQVAEConfig:
-    in_channels: int
-    hidden_channels: int
-    res_channels: int
-    nb_res_layers: int
-    nb_levels: int
-    embed_dim: int
-    nb_entries: int
-    scaling_rates: list[int]
+class MultiLevelVQVAE(torch.nn.Module):
 
-    def build_model(self) -> "LevelVQVAE":
-        return LevelVQVAE(config=self, **self.__dict__)
-
-class LevelVQVAE(torch.nn.Module):
     def __init__(
         self,
-        config: LevelVQVAEConfig,
+        config: MultiLevelVQVAEConfig,
         in_channels: int = 3,
         hidden_channels: int = 128,
         res_channels: int = 32,
-        nb_res_layers: int = 2,
-        nb_levels: int = 3,
+        num_res_layers: int = 2,
+        num_levels: int = 3,
         embed_dim: int = 64,
-        nb_entries: int = 512,
+        num_entries: int = 512,
         scaling_rates: list[int] = [8, 4, 2],
     ):
         super().__init__()
         self.config = config
-        self.n_levels = nb_levels
+        self.num_levels = num_levels
         assert (
-            len(scaling_rates) == nb_levels
+            len(scaling_rates) == num_levels
         ), "Number of scaling rates not equal to number of levels!"
 
         self.encoders = nn.ModuleList(
@@ -266,7 +277,7 @@ class LevelVQVAE(torch.nn.Module):
                     in_channels,
                     hidden_channels,
                     res_channels,
-                    nb_res_layers,
+                    num_res_layers,
                     scaling_rates[0],
                 )
             ]
@@ -274,25 +285,25 @@ class LevelVQVAE(torch.nn.Module):
         for i, sr in enumerate(scaling_rates[1:]):
             self.encoders.append(
                 Encoder(
-                    hidden_channels, hidden_channels, res_channels, nb_res_layers, sr
+                    hidden_channels, hidden_channels, res_channels, num_res_layers, sr
                 )
             )
 
         self.codebooks = nn.ModuleList()
-        for i in range(nb_levels - 1):
+        for i in range(num_levels - 1):
             self.codebooks.append(
-                CodeLayer(hidden_channels + embed_dim, embed_dim, nb_entries)
+                CodeLayer(hidden_channels + embed_dim, embed_dim, num_entries)
             )
-        self.codebooks.append(CodeLayer(hidden_channels, embed_dim, nb_entries))
+        self.codebooks.append(CodeLayer(hidden_channels, embed_dim, num_entries))
 
         self.decoders = nn.ModuleList(
             [
                 Decoder(
-                    embed_dim * nb_levels,
+                    embed_dim * num_levels,
                     hidden_channels,
                     in_channels,
                     res_channels,
-                    nb_res_layers,
+                    num_res_layers,
                     scaling_rates[0],
                 )
             ]
@@ -300,48 +311,56 @@ class LevelVQVAE(torch.nn.Module):
         for i, sr in enumerate(scaling_rates[1:]):
             self.decoders.append(
                 Decoder(
-                    embed_dim * (nb_levels - 1 - i),
+                    embed_dim * (num_levels - 1 - i),
                     hidden_channels,
                     embed_dim,
                     res_channels,
-                    nb_res_layers,
+                    num_res_layers,
                     sr,
                 )
             )
 
         self.upscalers = nn.ModuleList()
-        for i in range(nb_levels - 1):
+        for i in range(num_levels - 1):
             self.upscalers.append(
                 Upscaler(embed_dim, scaling_rates[1 : len(scaling_rates) - i][::-1])
             )
 
-    def vector_quantize(self, x, level, shape: Optional[tuple] = None):
-        if level >= self.n_levels:
-            raise ValueError("Level out of range")
 
-        if shape is not None:
-            x = x.view(-1, *shape)
-        if x.dim() == 2:
-            bsz, n_tokens = x.shape
-            l = math.sqrt(n_tokens)
-            x.view(bsz, l, l)
+
+
+    def embeddings_to_code_ids(
+        self, x: torch.FloatTensor, level: int
+    ) -> tuple[torch.FloatTensor, torch.LongTensor]:
+        """
+        Args:
+            x (torch.FloatTensor): Input tensor, shape [B, C, H, W]
+            level (int): Level of the codebook
+
+        Returns:
+            tuple[torch.FloatTensor, torch.LongTensor]: Quantized tensor and code ids
+        """
+        if level >= self.num_levels:
+            raise ValueError("Level out of range")
         quantized_code, diff, code_ids = self.codebooks[level](x)
         return quantized_code, code_ids
 
-    def embed_code_id(self, x, level, shape: Optional[tuple] = None):
-        if level >= self.n_levels:
+    def code_ids_to_embeddings(
+        self, x: torch.FloatTensor, level: int
+    ) -> torch.FloatTensor:
+        """
+        Args:
+            x (torch.FloatTensor): Input tensor, shape [B, C, H, W]
+            level (int): Level of the codebook
+
+        Returns:
+            torch.FloatTensor: Quantized tensor
+        """
+        if level >= self.num_levels:
             raise ValueError("Level out of range")
-        
-        if shape is not None:
-            x = x.view(-1, *shape)
-        if x.dim() == 2:
-            bsz, n_tokens = x.shape
-            l = math.sqrt(n_tokens)
-            x.view(bsz, l, l)
-        return self.codebooks[level].embed_code(x).permute(0, 3, 1, 2)
+        return self.codebooks[level].embed_code(x).permute(0, 3, 1, 2).contiguous()
 
-
-    def forward(self, x):
+    def forward(self, x: torch.FloatTensor):
         encoder_outputs = []
         code_outputs = []
         decoder_outputs = []
@@ -356,7 +375,7 @@ class LevelVQVAE(torch.nn.Module):
             else:
                 encoder_outputs.append(enc(x))
 
-        for l in range(self.n_levels - 1, -1, -1):
+        for l in range(self.num_levels - 1, -1, -1):
             codebook, decoder = self.codebooks[l], self.decoders[l]
 
             if len(decoder_outputs):  # if we have previous levels to condition on
@@ -380,13 +399,28 @@ class LevelVQVAE(torch.nn.Module):
 
         return decoder_outputs[-1], diffs, encoder_outputs, decoder_outputs, id_outputs
 
-    def decode_codes(self, *cs):
+    def decode_codes(
+        self, cs: list[torch.LongTensor]
+    ) -> torch.FloatTensor:
+        """
+        Args:
+            cs (list[torch.LongTensor]): List of code tensors
+
+        Returns:
+            torch.FloatTensor: Decoded image
+
+        Note:
+            code should be in ascending order of levels
+            [level0, level1, level2, ...]
+            level0 has the largest resolution
+        """
         decoder_outputs = []
         code_outputs = []
         upscale_counts = []
 
-        for l in range(self.n_levels - 1, -1, -1):
+        for l in range(self.num_levels - 1, -1, -1):
             codebook, decoder = self.codebooks[l], self.decoders[l]
+
             code_q = codebook.embed_code(cs[l]).permute(0, 3, 1, 2)
             code_outputs = [
                 self.upscalers[i](c, upscale_counts[i])
@@ -399,7 +433,6 @@ class LevelVQVAE(torch.nn.Module):
             upscale_counts.append(0)
 
         return decoder_outputs[-1]
-
 
 
 _ffhq1024 = {
@@ -528,9 +561,7 @@ _kmnist = {
 }
 
 
-
-
-def get_config_by_taskname(taskname: str) -> LevelVQVAEConfig:
+def get_config_by_taskname(taskname: str) -> MultiLevelVQVAEConfig:
     HPS_VQVAE = {
         "ffhq1024": _ffhq1024,
         "ffhq1024-large": _ffhq1024_large,
@@ -540,26 +571,30 @@ def get_config_by_taskname(taskname: str) -> LevelVQVAEConfig:
         "mnist": _mnist,
         "kmnist": _kmnist,
     }
-    return LevelVQVAEConfig(
+    return MultiLevelVQVAEConfig(
         in_channels=HPS_VQVAE[taskname]["in_channels"],
         hidden_channels=HPS_VQVAE[taskname]["hidden_channels"],
         res_channels=HPS_VQVAE[taskname]["res_channels"],
-        nb_res_layers=HPS_VQVAE[taskname]["nb_res_layers"],
-        nb_levels=HPS_VQVAE[taskname]["nb_levels"],
+        num_res_layers=HPS_VQVAE[taskname]["nb_res_layers"],
+        num_levels=HPS_VQVAE[taskname]["nb_levels"],
         embed_dim=HPS_VQVAE[taskname]["embed_dim"],
-        nb_entries=HPS_VQVAE[taskname]["nb_entries"],
+        num_entries=HPS_VQVAE[taskname]["nb_entries"],
         scaling_rates=HPS_VQVAE[taskname]["scaling_rates"],
     )
 
-def get_model_by_taskname(taskname: str) -> LevelVQVAE:
+
+def get_model_by_taskname(taskname: str) -> MultiLevelVQVAE:
     config = get_config_by_taskname(taskname)
-    return LevelVQVAE(config, **config.__dict__)
+    return MultiLevelVQVAE(config, **config.__dict__)
+
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     nb_levels = 10
-    net = LevelVQVAE(nb_levels=nb_levels, scaling_rates=[2] * nb_levels).to(device)
+    net = MultiLevelVQVAE(num_levels=nb_levels, scaling_rates=[2] * nb_levels).to(
+        device
+    )
 
     x = torch.randn(1, 3, 1024, 1024).to(device)
     _, diffs, enc_out, dec_out = net(x)

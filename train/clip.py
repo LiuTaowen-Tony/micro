@@ -5,16 +5,19 @@ import datasets
 import torch
 from torch import nn
 import torchvision
+
+import pytorch_lightning as pl
+from pytorch_lightning.strategies import DDPStrategy
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.utilities import grad_norm
+
 from ml_utils.args import DataClassArgumentParser
 from ml_utils.misc import save_with_config, to_model_device
 from ml_utils.optim import LinearWarmupCosineAnnealingLR
-from model.clip import Clip, ClipInitConfig
-from train.base_algorithm import BaseAlgorithm
-import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.utilities import grad_norm
-from inference.clip import ClipInference
 
+from model.clip import ClipInitConfig
+from train.base_algorithm import BaseAlgorithm
+from inference.clip import ClipInference
 from model.transformer import DecoderOnlyTransformer
 
 torch.set_float32_matmul_precision('medium')
@@ -23,7 +26,7 @@ torch.set_float32_matmul_precision('medium')
 class TrainerArgs:
     val_check_interval: int = 0.5
     gradient_clip_val: float = 1
-    max_epochs: int = 8
+    max_epochs: int = 12
     # max_steps: int = -1
     accumulate_grad_batches: int = 1
     log_every_n_steps: int = 1
@@ -33,9 +36,9 @@ class TrainerArgs:
 @dataclass
 class ClipTrainArgs:
     batch_size: int = -1
-    total_batch_size: int = 32
-    img_encoder_lr: float = 1e-4
-    text_encoder_lr: float = 1e-5
+    total_batch_size: int = 32 * 4
+    img_encoder_lr: float = 5e-5
+    text_encoder_lr: float = 8e-6
     img_projection_head_lr: float = 1e-3
     text_projection_head_lr: float = 1e-3
     text_model_trainable_layers: int = 5
@@ -48,7 +51,7 @@ class ClipTrainArgs:
     project_name: str = "clip"
 
 
-class ClipAlgorithm(BaseAlgorithm):
+class TrainClip(BaseAlgorithm):
 
     def __init__(
         self,
@@ -72,28 +75,10 @@ class ClipAlgorithm(BaseAlgorithm):
         text_features, img_features = self.clip_model(
             batch["input_ids"], batch["image"], batch["attention_mask"]
         )
-        # text_features = all_gather_concat_pl(self, text_features)
-        # img_features = all_gather_concat_pl(self, img_features)
-        # text_features = all_gather_concat(text_features, self.local_rank, torch.cuda.device_count())
-        # img_features = all_gather_concat(img_features, self.local_rank, torch.cuda.device_count())
-        # img_features = all_gather(img_features)
-        # text_features = all_gather(text_features)
-        # print(img_features.shape, text_features.shape)
 
         logits_per_text = (text_features @ img_features.t()) / self.train_args.temperature
         logits_per_img = logits_per_text.t()
 
-        # target = F.softmax(
-        #     (images_sim + texts_sim) / 2 * self.train_args.temperature, dim=-1
-        # )
-        # # why build target like this?
-        # # there are some internal similarity between different images and texts
-        # # for example: two images of dogs should be similar, they can appear in the same
-        # # batch
-
-        # text_loss = self.cross_entropy(logits, target)
-        # image_loss = self.cross_entropy(logits.t(), target.t())
-        # loss = (text_loss + image_loss) / 2  # shape (batch_size,)
         labels = to_model_device(torch.arange(logits_per_text.shape[0]), self)
         loss1 = nn.functional.cross_entropy(logits_per_text, labels)
         loss2 = nn.functional.cross_entropy(logits_per_img, labels)
@@ -241,14 +226,14 @@ def parse_args() -> tuple[ClipInitConfig, TrainerArgs, ClipTrainArgs]:
 
 
 if __name__ == "__main__":
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     train_args, trainer_args, model_config = parse_args()
     logger = WandbLogger(project=train_args.project_name)
-    algorithm = ClipAlgorithm(model_config, train_args, logger)
+    algorithm = TrainClip(model_config, train_args, logger)
     trainer = pl.Trainer(
         **trainer_args.__dict__,
         logger=logger,
+        strategy=DDPStrategy(find_unused_parameters=True),
     )
     trainer.fit(algorithm)
     save_with_config(algorithm.clip_model, "trained_models/clip-micro-lm-mobilenet-v4-flickr30k")
