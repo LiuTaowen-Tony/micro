@@ -1,4 +1,6 @@
 import torch
+from torch import FloatTensor, BoolTensor, LongTensor
+from typing import Optional, List
 import torch.nn as nn
 import math
 from .transformer import MLP as FeedForward
@@ -52,7 +54,7 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, q, k, v, is_causal: bool, mask=None, kv_cache=None):
         batch_size = q.size(0)
-        
+
         # they need to be both None or not None
         assert (mask is not None) == (kv_cache is not None)
         # if both are None, is_causal -> Decoder, otherwise -> Encoder
@@ -184,30 +186,55 @@ class Transformer(nn.Module):
 
         self.fc_out = nn.Linear(config.d_model, config.tgt_vocab_size)
 
-
     def make_tgt_mask(self, tgt):
         seq_len = tgt.size(1)
         tgt_mask = torch.tril(torch.ones((seq_len, seq_len), device=tgt.device)).bool()
         return tgt_mask.unsqueeze(0).unsqueeze(1)
 
-    def encode(self, src):
-        src = self.encoder_embedding(src) * math.sqrt(src.size(-1))
-        src = self.pos_encoder(src)
+    def encode_feature_transform(self, x: FloatTensor) -> FloatTensor:
+        src = self.pos_encoder(x)
         for layer in self.encoder_layers:
             src = layer(src)
         return src
 
-    def decode(
-        self, tgt, memory,  tgt_mask=None, kv_cache=None
-    ):
-        tgt = self.decoder_embedding(tgt) * math.sqrt(tgt.size(-1))
+    def decode_feature_transform(
+        self,
+        tgt: FloatTensor,
+        memory: FloatTensor,
+        *,
+        mask: Optional[BoolTensor] = None,
+        kv_caches=None
+    ) -> FloatTensor:
         tgt = self.pos_encoder(tgt)
-
         for layer in self.decoder_layers:
-            tgt, kv_cache = layer(tgt, memory, tgt_mask, kv_cache)
-        return tgt, kv_cache
+            tgt, kv_caches = layer(tgt, memory, mask, kv_caches)
+        return tgt, kv_caches
 
-    def forward(self, src, tgt):
+    def encode(self, src):
+        src = self.encoder_embedding(src) * math.sqrt(src.size(-1))
+        src = self.pos_encoder(src)
+
+    def decode(self, tgt, memory, tgt_mask=None, kv_cache=None):
+        tgt = self.decoder_embedding(tgt) * math.sqrt(tgt.size(-1))
+        return self.decode_feature_transform(tgt, memory, tgt_mask, kv_cache)
+
+    def feature_transform(
+        self,
+        src: Optional[FloatTensor],
+        *,
+        tgt: FloatTensor,
+        mask: Optional[BoolTensor] = None,
+        kv_caches=None
+    ) -> FloatTensor:
+        memory = None
+        if src is not None:
+            memory = self.encode_feature_transform(src)
+        output, _ = self.decode_feature_transform(
+            tgt, memory, mask=mask, kv_caches=kv_caches
+        )
+        return output
+
+    def forward(self, src: Optional[FloatTensor], tgt: FloatTensor) -> FloatTensor:
         memory = None
         if src is not None:
             memory = self.encode(src)

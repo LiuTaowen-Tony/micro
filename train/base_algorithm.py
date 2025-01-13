@@ -73,20 +73,26 @@ class BaseAlgorithm(pl.LightningModule):
 
 
     def train_dataloader(self):
+        collate_fn = None
+        if hasattr(self, "collate_fn"):
+            collate_fn = self.collate_fn
         return torch.utils.data.DataLoader(
             self.train_dataset,
             batch_size=self.train_args.batch_size,
             num_workers=9,
             shuffle=True,
-            collate_fn=self.collate_fn,
+            collate_fn=collate_fn,
         )
 
     def val_dataloader(self):
+        collate_fn = None
+        if hasattr(self, "collate_fn"):
+            collate_fn = self.collate_fn
         return torch.utils.data.DataLoader(
             self.val_dataset,
             batch_size=self.train_args.batch_size,
             num_workers=9,
-            collate_fn=self.collate_fn
+            collate_fn=collate_fn
         )
 
     def on_before_optimizer_step(self, optimizer):
