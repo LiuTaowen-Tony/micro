@@ -19,22 +19,27 @@ torch.set_float32_matmul_precision("medium")
 
 
 @dataclasses.dataclass()
+class TrainerArgs:
+    val_check_interval: int = 1000
+    gradient_clip_val: float = 1
+    max_epochs: int = 1
+    max_steps: int = 60000
+    accumulate_grad_batches: int = 1
+    log_every_n_steps: int = 1
+    precision: str = "bf16-mixed"
+
+
+@dataclasses.dataclass()
 class TrainArgs:
     total_batch_size: int = 384
     accumulate_grad_batches: int = 4
     learning_rate: float = 5e-4
     weight_decay: float = 1e-1
-    beta1: float = 0.9
-    beta2: float = 0.999
     warmup_steps: int = 2000
     seed: int = 1
     batch_size: int = -1
-    max_steps: int = 60000
-    val_check_interval: int = 3000
     min_learning_rate_ratio: float = 0.1
-    gradient_clip_val: float = 1
     ckpt_path: str = ""
-    max_epochs: int = 1
     data_module_type: str = "fillseq"
     dataset_path: str = "cerebras/SlimPajama-627B"
     model_path: str = ""
@@ -42,18 +47,6 @@ class TrainArgs:
     project_name: str = "micro-training"
 
 
-# Argument parser
-def parse_args() -> Tuple[TrainArgs, transformer.DecoderOnlyTransformerConfig]:
-    train_args, model_config = DataClassArgumentParser(
-        (TrainArgs, transformer.DecoderOnlyTransformerConfig)
-    ).parse_args_into_dataclasses()
-    train_args: TrainArgs
-    train_args.batch_size = (
-        train_args.total_batch_size
-        // train_args.accumulate_grad_batches
-        // torch.cuda.device_count()
-    )
-    return train_args, model_config
 
 
 random.seed(1)
@@ -108,72 +101,27 @@ class LMDecoderAlgorithm(BaseAlgorithm):
             print(generated_text)
         return loss
 
-    # def on_before_optimizer_step(self, optimizer):
-    #     # Compute the 2-norm for each layer
-    #     # If using mixed precision, the gradients are already unscaled here
-    #     norms = grad_norm(self.model, norm_type=2)
-    #     self.log_dict(norms)
-
-    # def configure_optimizers(self):
-    #     param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
-    #     decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-    #     nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-    #     optim_groups = [
-    #         {"params": decay_params, "weight_decay": self.args.weight_decay},
-    #         {"params": nodecay_params, "weight_decay": 0.0},
-    #     ]
-    #     num_decay_params = sum(p.numel() for p in decay_params)
-    #     num_nodecay_params = sum(p.numel() for p in nodecay_params)
-    #     if self.local_rank == 0:
-    #         print(
-    #             f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
-    #         )
-    #         print(
-    #             f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
-    #         )
-    #     optimizer = torch.optim.AdamW(
-    #         optim_groups,
-    #         lr=self.args.learning_rate,
-    #         betas=(self.args.beta1, self.args.beta2),
-    #         fused=False,
-    #     )
-    #     max_steps = self.args.max_steps
-    #     if self.args.max_steps == -1:
-    #         max_steps = (
-    #             self.trainer.max_epochs * self.trainer.estimated_stepping_batches
-    #         )
-    #     print(f"max_steps: {max_steps}")
-    #     scheduler = ml_utils.optim.LinearWarmupCosineAnnealingLR(
-    #         optimizer,
-    #         warmup_steps=self.args.warmup_steps,
-    #         max_steps=max_steps,
-    #         eta_min=self.args.learning_rate * self.args.min_learning_rate_ratio,
-    #     )
-    #     return {
-    #         "optimizer": optimizer,
-    #         "lr_scheduler": {
-    #             "scheduler": scheduler,
-    #             "interval": "step",
-    #         },
-    #     }
+# Argument parser
+def parse_args() -> Tuple[TrainArgs, TrainerArgs, transformer.DecoderOnlyTransformerConfig]:
+    train_args, trainer_args, model_config = DataClassArgumentParser(
+        (TrainArgs, transformer.DecoderOnlyTransformerConfig)
+    ).parse_args_into_dataclasses()
+    train_args.batch_size = (
+        train_args.total_batch_size
+        // train_args.accumulate_grad_batches
+        // torch.cuda.device_count()
+    )
+    return train_args, trainer_args, model_config
 
 
 # Main training function
 def main():
-    train_args, model_config = parse_args()
+    train_args, trainer_args, model_config = parse_args()
     # Load tokenizer
     wandb_logger = WandbLogger(project=train_args.project_name)
-    wandb_logger.log_hyperparams(train_args.__dict__)
-
     trainer = pl.Trainer(
-        max_epochs=train_args.max_epochs,
-        accumulate_grad_batches=train_args.accumulate_grad_batches,
-        precision="bf16-mixed",
         logger=wandb_logger,
-        max_steps=train_args.max_steps,
-        val_check_interval=train_args.val_check_interval,
-        log_every_n_steps=1,
-        gradient_clip_val=train_args.gradient_clip_val,
+        **dataclasses.asdict(trainer_args),
     )
     model = model_config.build_model()
     tokenizer = model.tokenizer

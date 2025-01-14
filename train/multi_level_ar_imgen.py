@@ -14,8 +14,7 @@ from pytorch_lightning.strategies import DDPStrategy
 
 from ml_utils.args import DataClassArgumentParser
 from ml_utils.data import load_jsonl
-from ml_utils.misc import load_with_config, save_with_config
-from ml_utils.dist import all_gather
+from ml_utils.misc import save_with_config
 
 from model.ar_imgen_transformer import TransformerArImGenConfig, TransformerArImGen
 from .base_algorithm import BaseAlgorithm
@@ -25,7 +24,7 @@ from .base_algorithm import BaseAlgorithm
 class TrainerArgs:
     # val_check_interval: int = 1.0
     gradient_clip_val: float = 1
-    max_epochs: int = 20
+    max_epochs: int = 100
     # max_steps: int = -1
     accumulate_grad_batches: int = 1
     log_every_n_steps: int = 1
@@ -34,7 +33,7 @@ class TrainerArgs:
 
 @dataclasses.dataclass()
 class LevelImGenTainerArgs:
-    total_batch_size: int = 64 * 3
+    total_batch_size: int = 24 
     learning_rate: float = 2e-4
     weight_decay: float = 0.1
     warmup_steps: float = 0.1
@@ -205,7 +204,6 @@ class LevelImGenTrainer(BaseAlgorithm):
         level_code_ids, shapes, label = self.build_level_code_ids(batch)
         loss, logits, predicted_code_ids = self.forward(level_code_ids, shapes, label)
         level_code_ids[self.model.config.level] = predicted_code_ids
-        print(predicted_code_ids.shape)
 
         if batch_idx == 0:
             self.log_reconstruct(level_code_ids, shapes, "val_output")

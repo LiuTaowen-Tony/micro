@@ -2,6 +2,15 @@ from dataclasses import dataclass
 from transformers import PreTrainedTokenizerFast
 import ml_utils.misc as misc
 
+@dataclass
+class TrainedTextTokenizerConfig:
+    tokenizer_file: str = misc.relative_path(
+        "../trained_models/text_tokenizer_v1/v1.json", __file__
+    )
+
+    def build_model(self):
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=self.tokenizer_file)
+        return tokenizer
 
 @dataclass
 class TextTokenizerConfig:

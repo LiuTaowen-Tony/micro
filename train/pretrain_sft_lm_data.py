@@ -186,8 +186,6 @@ class FillSeqDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    import sampler.lm_tokenizer as lm_tokenizer
-    tokenizer = lm_tokenizer.load_tokenizer()
     # data_module = FillSeqDataModule(tokenizer, 8, 512, "DKYoon/SlimPajama-6B")
     # data_module.setup()
     # train_loader = data_module.train_dataloader()
@@ -200,7 +198,8 @@ if __name__ == "__main__":
     # for i, x in zip(range(5), train_loader):
     #     print(x)
     # print("DataModule state dict test passed")
-
+    from model.text_tokenizer import TrainedTextTokenizerConfig
+    tokenizer = TrainedTextTokenizerConfig().build_model()
     data_module = SFTDataModule(tokenizer, 8, 1024, "HuggingFaceH4/ultrachat_200k")
     data_module.setup()
     train_loader = data_module.train_dataloader()
